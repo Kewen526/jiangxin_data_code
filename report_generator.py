@@ -19,7 +19,7 @@ DB_CONFIG = {
     'port': 3306,
     'user': 'root',
     'password': 'Kewen888@',
-    'database': 'jx_data',  # 请根据实际数据库名修改
+    'database': 'jx_data_info',  # 数据库名称
     'charset': 'utf8mb4',
     'use_unicode': True,
     'autocommit': True
@@ -34,10 +34,99 @@ CONNECTION_POOL = mysql.connector.pooling.MySQLConnectionPool(
 )
 
 
+# ==================== 辅助函数 ====================
+def get_shop_info_mapping():
+    """
+    获取门店信息映射
+    返回: dict {shop_id: {'operator': '', 'sales': '', 'city': ''}}
+    """
+    import json
+
+    conn = CONNECTION_POOL.get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        # 1. 查询 platform_accounts 和 saas_users
+        sql = """
+        SELECT
+            pa.account,
+            pa.stores_json,
+            pa.sales_name,
+            pa.city_name,
+            pa.operator_id,
+            su.name as operator_name
+        FROM platform_accounts pa
+        LEFT JOIN saas_users su ON pa.operator_id = su.id
+        WHERE pa.stores_json IS NOT NULL
+        """
+
+        cursor.execute(sql)
+        accounts = cursor.fetchall()
+
+        # 2. 解析 stores_json 构建映射
+        shop_mapping = {}
+
+        for account in accounts:
+            stores_json = account.get('stores_json')
+            sales_name = account.get('sales_name', '')
+            city_name = account.get('city_name', '')
+            operator_name = account.get('operator_name', '')
+
+            if stores_json:
+                try:
+                    # 解析 JSON（可能是字符串或已经是对象）
+                    if isinstance(stores_json, str):
+                        stores = json.loads(stores_json)
+                    else:
+                        stores = stores_json
+
+                    # 遍历门店列表
+                    if isinstance(stores, list):
+                        for store in stores:
+                            if isinstance(store, dict):
+                                shop_id = str(store.get('shop_id', ''))
+                                if shop_id:
+                                    shop_mapping[shop_id] = {
+                                        'operator': operator_name or '',
+                                        'sales': sales_name or '',
+                                        'city': city_name or ''
+                                    }
+                except (json.JSONDecodeError, TypeError) as e:
+                    # 忽略解析错误
+                    pass
+
+        return shop_mapping
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def clean_sheet_name(name, max_length=31):
+    """
+    清理 Sheet 名称，符合 Excel 规范
+    - 最大 31 字符
+    - 不能包含: \ / * ? : [ ]
+    """
+    if not name:
+        return "Sheet"
+
+    # 替换非法字符
+    illegal_chars = ['\\', '/', '*', '?', ':', '[', ']']
+    for char in illegal_chars:
+        name = name.replace(char, '')
+
+    # 截断到最大长度
+    if len(name) > max_length:
+        name = name[:max_length]
+
+    return name or "Sheet"
+
+
 # ==================== 核心功能：生成日报 ====================
 def generate_daily_report(report_date, output_filename=None):
     """
-    生成日报
+    生成日报（每个门店一个独立的 Sheet）
 
     参数:
         report_date: str, 报表日期，格式: 'YYYY-MM-DD'
@@ -46,7 +135,11 @@ def generate_daily_report(report_date, output_filename=None):
     返回:
         str: 生成的文件路径
     """
-    # 从连接池获取连接
+    # 1. 获取门店信息映射
+    print("正在加载门店信息...")
+    shop_mapping = get_shop_info_mapping()
+
+    # 2. 从连接池获取连接
     conn = CONNECTION_POOL.get_connection()
     cursor = conn.cursor(dictionary=True)
 
@@ -55,7 +148,6 @@ def generate_daily_report(report_date, output_filename=None):
         sql = """
         SELECT
             k.report_date,
-            k.city,
             k.shop_id,
             k.shop_name,
             k.exposure_users,
@@ -80,7 +172,7 @@ def generate_daily_report(report_date, output_filename=None):
         LEFT JOIN store_stats s
             ON k.shop_id = s.store_id AND k.report_date = s.date
         WHERE k.report_date = %s
-        ORDER BY k.id
+        ORDER BY k.shop_id
         """
 
         cursor.execute(sql, (report_date,))
@@ -90,12 +182,11 @@ def generate_daily_report(report_date, output_filename=None):
             print(f"警告：{report_date} 没有数据")
             return None
 
-        # 创建 Excel 工作簿
+        # 3. 创建 Excel 工作簿
         wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "日报"
+        wb.remove(wb.active)  # 删除默认 Sheet
 
-        # 写入表头
+        # 表头定义
         headers = [
             '星期', '日期', '序号', '运营', '城市', '销售', '门店',
             '曝光人数', '访问人数', '下单人数', '核销人数', '下单券数', '核销券数',
@@ -103,7 +194,6 @@ def generate_daily_report(report_date, output_filename=None):
             '下单售价金额', '核销售价金额', '优惠后核销金额',
             '下单人数商圈排名', '核销金额商圈排名'
         ]
-        ws.append(headers)
 
         # 格式化日期
         date_obj = datetime.strptime(report_date, '%Y-%m-%d')
@@ -111,20 +201,49 @@ def generate_daily_report(report_date, output_filename=None):
         weekday = weekday_names[date_obj.weekday()]
         date_str = date_obj.strftime('%m月%d日')
 
-        # 写入数据行
-        for idx, row in enumerate(rows, start=1):
-            # 格式化商圈排名
-            order_rank = f"第{row['order_user_rank']}名" if row['order_user_rank'] and row['order_user_rank'] < 100 else ("大于100名" if row['order_user_rank'] else "--")
-            verify_rank = f"第{row['verify_amount_rank']}名" if row['verify_amount_rank'] and row['verify_amount_rank'] < 100 else ("大于100名" if row['verify_amount_rank'] else "--")
+        # 用于处理重名 Sheet
+        sheet_names_used = {}
 
+        # 4. 为每个门店创建一个 Sheet
+        for idx, row in enumerate(rows, start=1):
+            shop_id = str(row['shop_id'])
+            shop_name = row['shop_name'] or f'门店{shop_id}'
+
+            # 从映射中获取运营、城市、销售
+            shop_info = shop_mapping.get(shop_id, {})
+            operator = shop_info.get('operator', '')
+            sales = shop_info.get('sales', '')
+            city = shop_info.get('city', '')
+
+            # 清理 Sheet 名称
+            sheet_name = clean_sheet_name(shop_name)
+
+            # 处理重名（添加序号）
+            if sheet_name in sheet_names_used:
+                sheet_names_used[sheet_name] += 1
+                sheet_name = f"{sheet_name[:28]}_{sheet_names_used[sheet_name]}"
+            else:
+                sheet_names_used[sheet_name] = 1
+
+            # 创建 Sheet
+            ws = wb.create_sheet(title=sheet_name)
+
+            # 写入表头
+            ws.append(headers)
+
+            # 格式化商圈排名
+            order_rank = f"第{row['order_user_rank']}名" if row['order_user_rank'] and row['order_user_rank'] < 100 else ("大于100名" if row['order_user_rank'] and row['order_user_rank'] >= 100 else "--")
+            verify_rank = f"第{row['verify_amount_rank']}名" if row['verify_amount_rank'] and row['verify_amount_rank'] < 100 else ("大于100名" if row['verify_amount_rank'] and row['verify_amount_rank'] >= 100 else "--")
+
+            # 写入数据行
             data_row = [
                 weekday,
                 date_str,
                 idx,
-                '',  # 运营 - 需要从 platform_accounts 关联
-                row['city'] or '',
-                '',  # 销售 - 需要从 platform_accounts 关联
-                row['shop_name'] or '',
+                operator,
+                city,
+                sales,
+                shop_name,
                 row['exposure_users'] or 0,
                 row['visit_users'] or 0,
                 row['order_users'] or 0,
@@ -144,43 +263,43 @@ def generate_daily_report(report_date, output_filename=None):
             ]
             ws.append(data_row)
 
-        # 应用样式
-        # 表头样式
-        header_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
-        header_font = Font(bold=True, size=10)
-        for cell in ws[1]:
-            cell.fill = header_fill
-            cell.font = header_font
-            cell.alignment = Alignment(horizontal='center', vertical='center')
+            # 应用样式
+            # 表头样式
+            header_fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+            header_font = Font(bold=True, size=10)
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center', vertical='center')
 
-        # 设置列宽
-        column_widths = [6, 8, 5, 12, 8, 8, 35, 10, 10, 10, 10, 10, 10, 10, 10, 12, 8, 12, 12, 12, 12, 14, 14]
-        for idx, width in enumerate(column_widths, start=1):
-            ws.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = width
+            # 设置列宽
+            column_widths = [6, 8, 5, 12, 8, 8, 35, 10, 10, 10, 10, 10, 10, 10, 10, 12, 8, 12, 12, 12, 12, 14, 14]
+            for col_idx, width in enumerate(column_widths, start=1):
+                ws.column_dimensions[openpyxl.utils.get_column_letter(col_idx)].width = width
 
-        # 设置边框和对齐
-        thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
-        )
+            # 设置边框和对齐
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
 
-        for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
-            for cell in row:
-                cell.border = thin_border
-                if cell.row > 1:  # 数据行
-                    if cell.column in [1, 2, 4, 5, 6, 7, 22, 23]:  # 文本列居左
-                        cell.alignment = Alignment(horizontal='left', vertical='center')
-                    else:  # 数字列居右
-                        cell.alignment = Alignment(horizontal='right', vertical='center')
+            for row_cells in ws.iter_rows(min_row=1, max_row=2, min_col=1, max_col=len(headers)):
+                for cell in row_cells:
+                    cell.border = thin_border
+                    if cell.row > 1:  # 数据行
+                        if cell.column in [1, 2, 4, 5, 6, 7, 22, 23]:  # 文本列
+                            cell.alignment = Alignment(horizontal='left', vertical='center')
+                        else:  # 数字列
+                            cell.alignment = Alignment(horizontal='right', vertical='center')
 
-        # 保存文件
+        # 5. 保存文件
         if not output_filename:
             output_filename = f"日报 非餐 {report_date.replace('-', '')} {datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
 
         wb.save(output_filename)
-        print(f"✅ 日报生成成功: {output_filename}")
+        print(f"✅ 日报生成成功: {output_filename}（共 {len(rows)} 个门店）")
         return output_filename
 
     finally:
@@ -531,6 +650,11 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
         shop_ids: list, 门店ID列表，为空则查询所有门店
         output_filename: str, 输出文件名
     """
+    # 1. 获取门店信息映射
+    print("正在加载门店信息...")
+    shop_mapping = get_shop_info_mapping()
+
+    # 2. 从连接池获取连接
     conn = CONNECTION_POOL.get_connection()
     cursor = conn.cursor(dictionary=True)
 
@@ -603,7 +727,13 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
             p1 = period1_data.get(shop_id, {})
             p2 = period2_data.get(shop_id, {})
             shop_name = p2.get('shop_name') or p1.get('shop_name', '未知门店')
-            city = p2.get('city') or p1.get('city', '')
+
+            # 从映射中获取运营、城市、销售
+            shop_id_str = str(shop_id)
+            shop_info = shop_mapping.get(shop_id_str, {})
+            operator = shop_info.get('operator', '')
+            sales = shop_info.get('sales', '')
+            city = shop_info.get('city', '')
 
             def get_val(data, key, default=0):
                 return data.get(key, default) if data else default
@@ -717,13 +847,9 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
             diff_good_reviews = p2_good_reviews - p1_good_reviews
             diff_review_rate = calc_rate_diff(p1_review_rate, p2_review_rate)
 
-            # 自定义报表增加：序号、运营、城市、销售字段
-            operation = ''  # TODO: 从 platform_accounts 获取
-            sales = ''      # TODO: 从 platform_accounts 获取
-
             # 第一行：时期1的核销数据（34列）
             row1 = [
-                seq_num, operation, city, sales, shop_name, period1_str,
+                seq_num, operator, city, sales, shop_name, period1_str,
                 round(p1_verify_discount, 2), p1_exposure, p1_visit, p1_exposure_rate,
                 p1_order_users, p1_order_coupons, p1_order_rate,
                 p1_verify_users, p1_verify_coupons,
@@ -738,7 +864,7 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
 
             # 第二行：时期2的数据
             row2 = [
-                seq_num, operation, city, sales, shop_name, period2_str,
+                seq_num, operator, city, sales, shop_name, period2_str,
                 round(p2_verify_discount, 2), p2_exposure, p2_visit, p2_exposure_rate,
                 p2_order_users, p2_order_coupons, p2_order_rate,
                 p2_verify_users, p2_verify_coupons,
@@ -753,7 +879,7 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
 
             # 第三行：差值
             row3 = [
-                seq_num, operation, city, sales, shop_name, '差值',
+                seq_num, operator, city, sales, shop_name, '差值',
                 diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
                 diff_order_users, diff_order_coupons, diff_order_rate,
                 diff_verify_users, diff_verify_coupons,
