@@ -37,9 +37,11 @@ CONNECTION_POOL = mysql.connector.pooling.MySQLConnectionPool(
 
 
 # ==================== 辅助函数 ====================
-def get_shop_info_mapping():
+def get_shop_info_mapping(accounts=None):
     """
     获取门店信息映射
+    参数:
+        accounts: list, 可选，账号列表（platform_accounts.account的值），如果提供则只查询这些账号
     返回: dict {shop_id: {'operator': '', 'sales': '', 'city': ''}}
     """
     conn = CONNECTION_POOL.get_connection()
@@ -56,17 +58,24 @@ def get_shop_info_mapping():
             pa.operator_id,
             su.name as operator_name
         FROM platform_accounts pa
-        LEFT JOIN saas_users su ON pa.operator_id = su.id
+        LEFT JOIN saas_users su ON pa.operator_id = su.manager_id
         WHERE pa.stores_json IS NOT NULL
         """
 
-        cursor.execute(sql)
-        accounts = cursor.fetchall()
+        # 如果指定了accounts列表，添加过滤条件
+        params = []
+        if accounts:
+            placeholders = ','.join(['%s'] * len(accounts))
+            sql += f" AND pa.account IN ({placeholders})"
+            params = accounts
+
+        cursor.execute(sql, params)
+        account_results = cursor.fetchall()
 
         # 2. 解析 stores_json 构建映射
         shop_mapping = {}
 
-        for account in accounts:
+        for account in account_results:
             stores_json = account.get('stores_json')
             sales_name = account.get('sales_name', '')
             city_name = account.get('city_name', '')
@@ -102,9 +111,11 @@ def get_shop_info_mapping():
         conn.close()
 
 
-def get_region_info_mapping():
+def get_region_info_mapping(accounts=None):
     """
     获取商圈信息映射
+    参数:
+        accounts: list, 可选，账号列表（platform_accounts.account的值），如果提供则只查询这些账号
     返回: dict {shop_id: {'city': '', 'district': '', 'region': ''}}
     数据来源: platform_accounts.compareRegions_json
     """
@@ -120,12 +131,19 @@ def get_region_info_mapping():
         WHERE pa.stores_json IS NOT NULL
         """
 
-        cursor.execute(sql)
-        accounts = cursor.fetchall()
+        # 如果指定了accounts列表，添加过滤条件
+        params = []
+        if accounts:
+            placeholders = ','.join(['%s'] * len(accounts))
+            sql += f" AND pa.account IN ({placeholders})"
+            params = accounts
+
+        cursor.execute(sql, params)
+        account_results = cursor.fetchall()
 
         region_mapping = {}
 
-        for account in accounts:
+        for account in account_results:
             stores_json = account.get('stores_json')
             regions_json = account.get('compareRegions_json')
 
@@ -280,7 +298,7 @@ def apply_border(ws, min_row, max_row, min_col, max_col):
 
 
 # ==================== 核心功能：生成日报 ====================
-def generate_daily_report(report_date, output_filename=None):
+def generate_daily_report(report_date, accounts=None, output_filename=None):
     """
     生成日报
     - Sheet 1: "汇总" - 横向表格，每行一个门店
@@ -288,17 +306,59 @@ def generate_daily_report(report_date, output_filename=None):
 
     参数:
         report_date: str, 报表日期，格式: 'YYYY-MM-DD'
+        accounts: list, 可选，门店账号列表（platform_accounts.account的值），如["13718175572a","19318574226a"]，如果提供则只生成这些账号的日报
         output_filename: str, 输出文件名，默认自动生成
 
     返回:
         str: 生成的文件路径
     """
-    # 1. 获取门店信息映射
-    print("正在加载门店信息...")
-    shop_mapping = get_shop_info_mapping()
-    region_mapping = get_region_info_mapping()
+    # 1. 如果指定了accounts，先获取对应的shop_id列表
+    shop_ids_filter = None
+    if accounts:
+        print(f"正在查询指定账号的门店信息: {accounts}")
+        conn_temp = CONNECTION_POOL.get_connection()
+        cursor_temp = conn_temp.cursor(dictionary=True)
+        try:
+            placeholders = ','.join(['%s'] * len(accounts))
+            sql_accounts = f"""
+            SELECT stores_json, compareRegions_json
+            FROM platform_accounts
+            WHERE account IN ({placeholders})
+            """
+            cursor_temp.execute(sql_accounts, accounts)
+            account_data = cursor_temp.fetchall()
 
-    # 2. 从连接池获取连接
+            # 从stores_json中提取shop_id
+            shop_ids_filter = []
+            for acc in account_data:
+                stores_json = acc.get('stores_json')
+                if stores_json:
+                    try:
+                        if isinstance(stores_json, str):
+                            stores = json.loads(stores_json)
+                        else:
+                            stores = stores_json
+
+                        if isinstance(stores, list):
+                            for store in stores:
+                                if isinstance(store, dict):
+                                    shop_id = str(store.get('shop_id', ''))
+                                    if shop_id:
+                                        shop_ids_filter.append(shop_id)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+            print(f"找到 {len(shop_ids_filter)} 个门店")
+        finally:
+            cursor_temp.close()
+            conn_temp.close()
+
+    # 2. 获取门店信息映射
+    print("正在加载门店信息...")
+    shop_mapping = get_shop_info_mapping(accounts)
+    region_mapping = get_region_info_mapping(accounts)
+
+    # 3. 从连接池获取连接
     conn = CONNECTION_POOL.get_connection()
     cursor = conn.cursor(dictionary=True)
 
@@ -340,10 +400,18 @@ def generate_daily_report(report_date, output_filename=None):
         LEFT JOIN store_stats s
             ON k.shop_id = s.store_id AND k.report_date = s.date
         WHERE k.report_date = %s
-        ORDER BY k.shop_id
         """
 
-        cursor.execute(sql, (report_date,))
+        # 添加shop_id过滤条件
+        params = [report_date]
+        if shop_ids_filter:
+            placeholders = ','.join(['%s'] * len(shop_ids_filter))
+            sql += f" AND k.shop_id IN ({placeholders})"
+            params.extend(shop_ids_filter)
+
+        sql += " ORDER BY k.shop_id"
+
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
 
         if not rows:
