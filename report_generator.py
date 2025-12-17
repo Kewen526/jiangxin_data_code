@@ -902,48 +902,7 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 diff_exposure_rate = calc_rate_diff(w1_exposure_rate, w2_exposure_rate)
                 diff_order_rate = calc_rate_diff(w1_order_rate, w2_order_rate)
 
-                # 行1: 第一周核销数据
-                row1 = [
-                    shop_name, week1_period,
-                    round(w1_verify_discount, 2), w1_exposure, w1_visit, w1_exposure_rate,
-                    w1_order_users, w1_order_coupons, w1_order_rate,
-                    w1_verify_users, w1_verify_coupons,
-                    round(w1_order_amount, 2), round(w1_verify_amount, 2),
-                    w1_coupon_orders, w1_phone_clicks, w1_avg_price
-                ]
-                ws_summary.append(row1)
-
-                # 行2: 第二周核销数据
-                row2 = [
-                    shop_name, week2_period,
-                    round(w2_verify_discount, 2), w2_exposure, w2_visit, w2_exposure_rate,
-                    w2_order_users, w2_order_coupons, w2_order_rate,
-                    w2_verify_users, w2_verify_coupons,
-                    round(w2_order_amount, 2), round(w2_verify_amount, 2),
-                    w2_coupon_orders, w2_phone_clicks, w2_avg_price
-                ]
-                ws_summary.append(row2)
-
-                # 行3: 差值
-                row3 = [
-                    shop_name, '差值',
-                    diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
-                    diff_order_users, diff_order_coupons, diff_order_rate,
-                    diff_verify_users, diff_verify_coupons,
-                    diff_order_amount, diff_verify_amount,
-                    diff_coupon_orders, diff_phone_clicks, diff_avg_price
-                ]
-                ws_summary.append(row3)
-
-                # 行4: 推广通表头
-                header_row = [
-                    '门店', '数据周期', '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
-                    '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
-                    '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
-                ]
-                ws_summary.append(header_row)
-
-                # 推广通相关数据
+                # 推广通相关数据（提前计算，用于后面）
                 w1_promo_cost = get_val(w1, 'promotion_cost')
                 w1_promo_exposure = get_val(w1, 'promotion_exposure')
                 w1_promo_clicks = get_val(w1, 'promotion_clicks')
@@ -976,7 +935,7 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 w2_collect_rate = f"{calc_rate(w2_collect, w2_visit)}%"
                 w2_review_rate = f"{calc_rate(w2_good_reviews, w2_verify_users)}%"
 
-                # 差值
+                # 推广通差值
                 diff_promo_cost = round(w2_promo_cost - w1_promo_cost, 2)
                 diff_promo_exposure = w2_promo_exposure - w1_promo_exposure
                 diff_promo_clicks = w2_promo_clicks - w1_promo_clicks
@@ -992,38 +951,85 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 diff_good_reviews = w2_good_reviews - w1_good_reviews
                 diff_review_rate = calc_rate_diff(w1_review_rate, w2_review_rate)
 
-                # 行5: 第一周推广通数据
-                row5 = [
+                # ==================== 汇总Sheet 8行结构（与示例一致）====================
+                # 行1: 核销数据表头
+                header_row1 = [
+                    '门店', '数据周期', '优惠后核销额', '曝光人数', '访问人数', '曝光访问转化率',
+                    '下单人数', '下单券数', '下单转化率', '核销人数', '核销券数',
+                    '下单售价金额', '核销售价金额', '优惠码订单', '电话点击', '客单价'
+                ]
+                ws_summary.append(header_row1)
+
+                # 行2: 第一周核销数据（带门店名）
+                row2 = [
                     shop_name, week1_period,
+                    round(w1_verify_discount, 2), w1_exposure, w1_visit, w1_exposure_rate,
+                    w1_order_users, w1_order_coupons, w1_order_rate,
+                    w1_verify_users, w1_verify_coupons,
+                    round(w1_order_amount, 2), round(w1_verify_amount, 2),
+                    w1_coupon_orders, w1_phone_clicks, w1_avg_price
+                ]
+                ws_summary.append(row2)
+
+                # 行3: 第二周核销数据（门店名为空）
+                row3 = [
+                    '', week2_period,
+                    round(w2_verify_discount, 2), w2_exposure, w2_visit, w2_exposure_rate,
+                    w2_order_users, w2_order_coupons, w2_order_rate,
+                    w2_verify_users, w2_verify_coupons,
+                    round(w2_order_amount, 2), round(w2_verify_amount, 2),
+                    w2_coupon_orders, w2_phone_clicks, w2_avg_price
+                ]
+                ws_summary.append(row3)
+
+                # 行4: 核销差值（门店名为空）
+                row4 = [
+                    '', '差值',
+                    diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
+                    diff_order_users, diff_order_coupons, diff_order_rate,
+                    diff_verify_users, diff_verify_coupons,
+                    diff_order_amount, diff_verify_amount,
+                    diff_coupon_orders, diff_phone_clicks, diff_avg_price
+                ]
+                ws_summary.append(row4)
+
+                # 行5: 推广通表头（门店名为空）
+                header_row2 = [
+                    '', '数据周期', '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
+                    '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
+                    '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
+                ]
+                ws_summary.append(header_row2)
+
+                # 行6: 第一周推广通数据（门店名为空）
+                row6 = [
+                    '', week1_period,
                     round(w1_promo_cost, 2), w1_promo_exposure, w1_promo_clicks, w1_click_price,
                     w1_promo_orders, w1_promo_rate, w1_view_groupbuy, w1_view_phone,
                     w1_consult, w1_address, w1_collect, w1_collect_rate,
                     w1_good_reviews, w1_review_rate
                 ]
-                ws_summary.append(row5)
+                ws_summary.append(row6)
 
-                # 行6: 第二周推广通数据
-                row6 = [
-                    shop_name, week2_period,
+                # 行7: 第二周推广通数据（门店名为空）
+                row7 = [
+                    '', week2_period,
                     round(w2_promo_cost, 2), w2_promo_exposure, w2_promo_clicks, w2_click_price,
                     w2_promo_orders, w2_promo_rate, w2_view_groupbuy, w2_view_phone,
                     w2_consult, w2_address, w2_collect, w2_collect_rate,
                     w2_good_reviews, w2_review_rate
                 ]
-                ws_summary.append(row6)
+                ws_summary.append(row7)
 
-                # 行7: 推广通差值
-                row7 = [
-                    shop_name, '差值',
+                # 行8: 推广通差值（门店名为空）
+                row8 = [
+                    '', '差值',
                     diff_promo_cost, diff_promo_exposure, diff_promo_clicks, diff_click_price,
                     diff_promo_orders, diff_promo_rate, diff_view_groupbuy, diff_view_phone,
                     diff_consult, diff_address, diff_collect, diff_collect_rate,
                     diff_good_reviews, diff_review_rate
                 ]
-                ws_summary.append(row7)
-
-                # 行8: 空行分隔
-                ws_summary.append([''] * 16)
+                ws_summary.append(row8)
 
                 # ==================== 门店详细Sheet（竖向31行）====================
                 sheet_name = clean_sheet_name(shop_name)
@@ -1437,62 +1443,85 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
                 diff_good_reviews = p2_good_reviews - p1_good_reviews
                 diff_review_rate = calc_rate_diff(p1_review_rate, p2_review_rate)
 
-                # 第一行：时期1核销数据
-                row1 = [
-                    seq_num, operator, city, sales, shop_name, period1_str,
+                # ==================== 汇总Sheet 8行结构（与周报一致）====================
+                # 行1: 核销数据表头
+                header_row1 = [
+                    '门店', '数据周期', '优惠后核销额', '曝光人数', '访问人数', '曝光访问转化率',
+                    '下单人数', '下单券数', '下单转化率', '核销人数', '核销券数',
+                    '下单售价金额', '核销售价金额', '优惠码订单', '电话点击', '客单价'
+                ]
+                ws_summary.append(header_row1)
+
+                # 行2: 第一个时期核销数据（带门店名）
+                row2 = [
+                    shop_name, period1_str,
                     round(p1_verify_discount, 2), p1_exposure, p1_visit, p1_exposure_rate,
                     p1_order_users, p1_order_coupons, p1_order_rate,
                     p1_verify_users, p1_verify_coupons,
                     round(p1_order_amount, 2), round(p1_verify_amount, 2),
-                    p1_coupon_orders, p1_phone_clicks, p1_avg_price,
+                    p1_coupon_orders, p1_phone_clicks, p1_avg_price
+                ]
+                ws_summary.append(row2)
+
+                # 行3: 第二个时期核销数据（门店名为空）
+                row3 = [
+                    '', period2_str,
+                    round(p2_verify_discount, 2), p2_exposure, p2_visit, p2_exposure_rate,
+                    p2_order_users, p2_order_coupons, p2_order_rate,
+                    p2_verify_users, p2_verify_coupons,
+                    round(p2_order_amount, 2), round(p2_verify_amount, 2),
+                    p2_coupon_orders, p2_phone_clicks, p2_avg_price
+                ]
+                ws_summary.append(row3)
+
+                # 行4: 核销差值（门店名为空）
+                row4 = [
+                    '', '差值',
+                    diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
+                    diff_order_users, diff_order_coupons, diff_order_rate,
+                    diff_verify_users, diff_verify_coupons,
+                    diff_order_amount, diff_verify_amount,
+                    diff_coupon_orders, diff_phone_clicks, diff_avg_price
+                ]
+                ws_summary.append(row4)
+
+                # 行5: 推广通表头（门店名为空）
+                header_row2 = [
+                    '', '数据周期', '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
+                    '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
+                    '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
+                ]
+                ws_summary.append(header_row2)
+
+                # 行6: 第一个时期推广通数据（门店名为空）
+                row6 = [
+                    '', period1_str,
                     round(p1_promo_cost, 2), p1_promo_exposure, p1_promo_clicks, p1_click_price,
                     p1_promo_orders, p1_promo_rate, p1_view_groupbuy, p1_view_phone,
                     p1_consult, p1_address, p1_collect, p1_collect_rate,
                     p1_good_reviews, p1_review_rate
                 ]
-                ws_summary.append(row1)
+                ws_summary.append(row6)
 
-                # 第二行：时期2数据
-                row2 = [
-                    seq_num, operator, city, sales, shop_name, period2_str,
-                    round(p2_verify_discount, 2), p2_exposure, p2_visit, p2_exposure_rate,
-                    p2_order_users, p2_order_coupons, p2_order_rate,
-                    p2_verify_users, p2_verify_coupons,
-                    round(p2_order_amount, 2), round(p2_verify_amount, 2),
-                    p2_coupon_orders, p2_phone_clicks, p2_avg_price,
+                # 行7: 第二个时期推广通数据（门店名为空）
+                row7 = [
+                    '', period2_str,
                     round(p2_promo_cost, 2), p2_promo_exposure, p2_promo_clicks, p2_click_price,
                     p2_promo_orders, p2_promo_rate, p2_view_groupbuy, p2_view_phone,
                     p2_consult, p2_address, p2_collect, p2_collect_rate,
                     p2_good_reviews, p2_review_rate
                 ]
-                ws_summary.append(row2)
+                ws_summary.append(row7)
 
-                # 第三行：差值
-                row3 = [
-                    seq_num, operator, city, sales, shop_name, '差值',
-                    diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
-                    diff_order_users, diff_order_coupons, diff_order_rate,
-                    diff_verify_users, diff_verify_coupons,
-                    diff_order_amount, diff_verify_amount,
-                    diff_coupon_orders, diff_phone_clicks, diff_avg_price,
+                # 行8: 推广通差值（门店名为空）
+                row8 = [
+                    '', '差值',
                     diff_promo_cost, diff_promo_exposure, diff_promo_clicks, diff_click_price,
                     diff_promo_orders, diff_promo_rate, diff_view_groupbuy, diff_view_phone,
                     diff_consult, diff_address, diff_collect, diff_collect_rate,
                     diff_good_reviews, diff_review_rate
                 ]
-                ws_summary.append(row3)
-
-                # 第四行：表头（重复）
-                header = [
-                    '序号', '运营', '城市', '销售', '门店', '数据周期',
-                    '优惠后核销额', '曝光人数', '访问人数', '曝光访问转化率',
-                    '下单人数', '下单券数', '下单转化率', '核销人数', '核销券数',
-                    '下单售价金额', '核销售价金额', '优惠码订单', '电话点击', '客单价',
-                    '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
-                    '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
-                    '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
-                ]
-                ws_summary.append(header)
+                ws_summary.append(row8)
 
                 # ==================== 门店详细Sheet（竖向31行）====================
                 sheet_name = clean_sheet_name(shop_name)
@@ -1595,10 +1624,10 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
                 seq_num += 1
                 continue
 
-        # 汇总表样式
-        for i in range(1, 35):
-            ws_summary.column_dimensions[get_column_letter(i)].width = 12
-        ws_summary.column_dimensions['E'].width = 40
+        # 汇总表样式（与周报保持一致，16列）
+        for i in range(1, 17):
+            ws_summary.column_dimensions[get_column_letter(i)].width = 15
+        ws_summary.column_dimensions['A'].width = 40
 
         thin_border = Border(
             left=Side(style='thin'),
@@ -1607,18 +1636,18 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
             bottom=Side(style='thin')
         )
 
-        for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=34):
+        for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=16):
             for cell in row:
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
                 # 差值行灰色背景
-                if cell.column == 6 and cell.value == '差值':
+                if cell.column == 2 and cell.value == '差值':
                     for c in row:
                         c.fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
 
                 # 表头行加粗
-                if cell.value == '序号' and ws_summary.cell(cell.row, 2).value == '运营':
+                if cell.column == 1 and cell.value == '门店':
                     for c in row:
                         c.font = Font(bold=True, size=10)
                         c.fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
