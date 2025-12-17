@@ -116,8 +116,22 @@ def get_region_info_mapping(accounts=None):
     获取商圈信息映射
     参数:
         accounts: list, 可选，账号列表（platform_accounts.account的值），如果提供则只查询这些账号
-    返回: dict {shop_id: {'city': '', 'district': '', 'region': ''}}
+    返回: dict {shop_id: {'city': '', 'district': '', 'business': ''}}
     数据来源: platform_accounts.compareRegions_json
+
+    compareRegions_json 数据结构示例:
+    {
+        "1015355375": {
+            "cityId": 110100,
+            "regions": {
+                "city": {"regionId": 110000, "regionName": "北京市"},
+                "business": {"regionId": 23031, "regionName": "西三旗"},
+                "district": {"regionId": 17, "regionName": "海淀区"}
+            },
+            "shopName": "云尚·艺境瑜伽SPA",
+            "branchName": "西三旗店"
+        }
+    }
     """
     conn = CONNECTION_POOL.get_connection()
     cursor = conn.cursor(dictionary=True)
@@ -125,10 +139,9 @@ def get_region_info_mapping(accounts=None):
     try:
         sql = """
         SELECT
-            pa.stores_json,
             pa.compareRegions_json
         FROM platform_accounts pa
-        WHERE pa.stores_json IS NOT NULL
+        WHERE pa.compareRegions_json IS NOT NULL
         """
 
         # 如果指定了accounts列表，添加过滤条件
@@ -144,47 +157,31 @@ def get_region_info_mapping(accounts=None):
         region_mapping = {}
 
         for account in account_results:
-            stores_json = account.get('stores_json')
             regions_json = account.get('compareRegions_json')
 
-            if stores_json and regions_json:
+            if regions_json:
                 try:
-                    # 解析门店列表
-                    if isinstance(stores_json, str):
-                        stores = json.loads(stores_json)
-                    else:
-                        stores = stores_json
-
                     # 解析商圈数据
                     if isinstance(regions_json, str):
                         regions = json.loads(regions_json)
                     else:
                         regions = regions_json
 
-                    # 遍历门店，匹配商圈信息
-                    if isinstance(stores, list):
-                        for store in stores:
-                            if isinstance(store, dict):
-                                shop_id = str(store.get('shop_id', ''))
-                                if shop_id and isinstance(regions, dict):
-                                    # regions 格式可能是 {shop_id: {city, district, region}}
-                                    # 或者是列表格式
-                                    if shop_id in regions:
-                                        region_data = regions[shop_id]
-                                        region_mapping[shop_id] = {
-                                            'city': region_data.get('city', ''),
-                                            'district': region_data.get('district', ''),
-                                            'region': region_data.get('region', '')
-                                        }
-                                    elif isinstance(regions, list):
-                                        for r in regions:
-                                            if str(r.get('shop_id', '')) == shop_id:
-                                                region_mapping[shop_id] = {
-                                                    'city': r.get('city', ''),
-                                                    'district': r.get('district', ''),
-                                                    'region': r.get('region', '')
-                                                }
-                                                break
+                    # compareRegions_json 格式: {shop_id: {regions: {city: {}, district: {}, business: {}}}}
+                    if isinstance(regions, dict):
+                        for shop_id, shop_data in regions.items():
+                            if isinstance(shop_data, dict):
+                                regions_data = shop_data.get('regions', {})
+                                if isinstance(regions_data, dict):
+                                    city_info = regions_data.get('city', {})
+                                    district_info = regions_data.get('district', {})
+                                    business_info = regions_data.get('business', {})
+
+                                    region_mapping[str(shop_id)] = {
+                                        'city': city_info.get('regionName', '') if isinstance(city_info, dict) else '',
+                                        'district': district_info.get('regionName', '') if isinstance(district_info, dict) else '',
+                                        'business': business_info.get('regionName', '') if isinstance(business_info, dict) else ''
+                                    }
                 except (json.JSONDecodeError, TypeError):
                     pass
 
@@ -254,6 +251,36 @@ def get_ad_orders_last_7days(shop_id, report_date):
         """
 
         cursor.execute(sql, (shop_id, start_date.strftime('%Y-%m-%d'), report_date))
+        result = cursor.fetchone()
+
+        return int(result['total']) if result and result['total'] else 0
+
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def get_ad_orders_today(shop_id, report_date):
+    """
+    获取当天广告单数量
+    参数:
+        shop_id: 门店ID
+        report_date: 报表日期 (str 'YYYY-MM-DD')
+    返回: int 当天广告单数量
+    数据来源: store_stats.ad_order_count
+    """
+    conn = CONNECTION_POOL.get_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        sql = """
+        SELECT COALESCE(ad_order_count, 0) as total
+        FROM store_stats
+        WHERE store_id = %s
+          AND date = %s
+        """
+
+        cursor.execute(sql, (shop_id, report_date))
         result = cursor.fetchone()
 
         return int(result['total']) if result and result['total'] else 0
@@ -468,7 +495,7 @@ def generate_daily_report(report_date, accounts=None, output_filename=None):
             region_info = region_mapping.get(shop_id, {})
             region_city = region_info.get('city', city)
             region_district = region_info.get('district', '')
-            region_name = region_info.get('region', '')
+            region_business = region_info.get('business', '')
 
             # 格式化商圈排名
             order_rank = row['order_user_rank']
@@ -534,13 +561,13 @@ def generate_daily_report(report_date, accounts=None, output_filename=None):
             collect_rate_str = f"{collect_rate:.1f}%"
             collect_qualified = "达标" if collect_rate >= 40 else "未达标"
 
-            # 近7天优惠码订单
+            # 近7天优惠码订单（7天>=10单达标）
             coupon_7days = get_coupon_orders_last_7days(shop_id, report_date)
             coupon_qualified = "达标" if coupon_7days >= 10 else "未达标"
 
-            # 近7天广告单
-            ad_7days = get_ad_orders_last_7days(shop_id, report_date)
-            ad_qualified = "达标" if ad_7days >= 10 else "未达标"
+            # 当天广告单（当天>=1单达标）
+            ad_today = get_ad_orders_today(shop_id, report_date)
+            ad_qualified = "达标" if ad_today >= 1 else "未达标"
 
             # 强制下线状态信息
             is_force_offline = row['is_force_offline'] or 0
@@ -549,10 +576,10 @@ def generate_daily_report(report_date, accounts=None, output_filename=None):
             else:
                 status_info = "今天邮件已查看，无违规无异常。"
 
-            # 商圈排名显示
-            region_display = f"{region_city}|{region_district}|{region_name}" if region_district else city
-            order_rank_display = f"{region_display}:第{order_rank}名" if order_rank and order_rank < 100 else f"{region_display}:大于100名"
-            verify_rank_display = f"{region_display}:第{verify_rank}名" if verify_rank and verify_rank < 100 else f"{region_display}:大于100名"
+            # 商圈排名显示（格式：城市 | 区 | 商圈：第X名）
+            region_display = f"{region_city} | {region_district} | {region_business}" if region_business else city
+            order_rank_display = f"{region_display}：第{order_rank}名" if order_rank and order_rank < 100 else f"{region_display}：大于100名"
+            verify_rank_display = f"{region_display}：第{verify_rank}名" if verify_rank and verify_rank < 100 else f"{region_display}：大于100名"
 
             # 构建竖向表格数据
             detail_data = [
@@ -583,7 +610,7 @@ def generate_daily_report(report_date, accounts=None, output_filename=None):
                 [f'留评率（30%达标）：', review_rate_str, review_qualified],
                 [f'收藏率（40%达标）：', collect_rate_str, collect_qualified],
                 [f'近7天优惠码订单是否达标：', coupon_7days, coupon_qualified],
-                [f'广告单：', f"7天共{ad_7days}单", ad_qualified],
+                [f'广告单：', f"当天{ad_today}单", ad_qualified],
                 ['', '', ''],
                 ['下单售价金额：', round(row['order_sale_amount'], 2) if row['order_sale_amount'] else 0, ''],
                 ['核销售价金额：', round(row['verify_sale_amount'], 2) if row['verify_sale_amount'] else 0, ''],
