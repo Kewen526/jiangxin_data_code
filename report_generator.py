@@ -1041,75 +1041,132 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
 
                 ws_detail = wb.create_sheet(title=sheet_name)
 
-                # 计算额外指标
-                w1_intent_rate = calc_rate(w1_order_users, w1_visit)
-                w2_intent_rate = calc_rate(w2_order_users, w2_visit)
+                # 计算额外指标（直接计算百分比值，不使用公式）
+                w1_exposure_rate_val = f"{calc_rate(w1_visit, w1_exposure)}%" if w1_exposure > 0 else "0%"
+                w2_exposure_rate_val = f"{calc_rate(w2_visit, w2_exposure)}%" if w2_exposure > 0 else "0%"
+                w1_intent_rate_val = f"{calc_rate(w1_order_users, w1_visit)}%" if w1_visit > 0 else "0%"
+                w2_intent_rate_val = f"{calc_rate(w2_order_users, w2_visit)}%" if w2_visit > 0 else "0%"
+                w1_review_rate_val = f"{calc_rate(w1_good_reviews, w1_verify_users)}%" if w1_verify_users > 0 else "0%"
+                w2_review_rate_val = f"{calc_rate(w2_good_reviews, w2_verify_users)}%" if w2_verify_users > 0 else "0%"
+                w1_collect_rate_val = f"{calc_rate(w1_collect, w1_order_users)}%" if w1_order_users > 0 else "0%"
+                w2_collect_rate_val = f"{calc_rate(w2_collect, w2_order_users)}%" if w2_order_users > 0 else "0%"
+
                 w1_checkin = get_val(w1, 'checkin_count')
                 w2_checkin = get_val(w2, 'checkin_count')
-                w1_reviews = get_val(w1, 'new_reviews')
-                w2_reviews = get_val(w2, 'new_reviews')
 
-                # 构建竖向表格（31行）
+                # 计算差值（用于差值列显示）
+                diff_exposure_val = w2_exposure - w1_exposure
+                diff_visit_val = w2_visit - w1_visit
+                diff_exposure_rate_val = f"{round(calc_rate(w2_visit, w2_exposure) - calc_rate(w1_visit, w1_exposure), 2)}%"
+                diff_order_users_val = w2_order_users - w1_order_users
+                diff_verify_users_val = w2_verify_users - w1_verify_users
+                diff_intent_rate_val = f"{round(calc_rate(w2_order_users, w2_visit) - calc_rate(w1_order_users, w1_visit), 2)}%"
+                diff_order_coupons_val = w2_order_coupons - w1_order_coupons
+                diff_verify_coupons_val = w2_verify_coupons - w1_verify_coupons
+                diff_order_amount_val = round(w2_order_amount - w1_order_amount, 2)
+                diff_verify_amount_val = round(w2_verify_amount - w1_verify_amount, 2)
+                diff_verify_discount_val = round(w2_verify_discount - w1_verify_discount, 2)
+                diff_avg_price_val = round(w2_avg_price - w1_avg_price, 2)
+                diff_phone_val = w2_phone_clicks - w1_phone_clicks
+                diff_address_val = w2_address - w1_address
+                diff_consult_val = w2_consult - w1_consult
+                diff_good_reviews_val = w2_good_reviews - w1_good_reviews
+                diff_review_rate_val = f"{round(calc_rate(w2_good_reviews, w2_verify_users) - calc_rate(w1_good_reviews, w1_verify_users), 2)}%"
+                diff_collect_val = w2_collect - w1_collect
+                diff_collect_rate_val = f"{round(calc_rate(w2_collect, w2_order_users) - calc_rate(w1_collect, w1_order_users), 2)}%"
+                diff_checkin_val = w2_checkin - w1_checkin
+                diff_promo_orders_val = w2_promo_orders - w1_promo_orders
+                diff_promo_cost_val = round(w2_promo_cost - w1_promo_cost, 2)
+                diff_promo_exposure_val = w2_promo_exposure - w1_promo_exposure
+                diff_promo_clicks_val = w2_promo_clicks - w1_promo_clicks
+                diff_click_price_val = round(w2_click_price - w1_click_price, 2)
+                diff_view_groupbuy_val = w2_view_groupbuy - w1_view_groupbuy
+                diff_view_phone_val = w2_view_phone - w1_view_phone
+
+                # 构建竖向表格（31行）- 使用计算后的值而不是公式
                 detail_data = [
                     [shop_name, '', '', ''],
-                    ['指标项/时间周期', week1_period, week2_period, '差值（红涨/黑跌）'],
-                    ['曝光人数：', w1_exposure, w2_exposure, f'=C3-B3'],
-                    ['访问人数：', w1_visit, w2_visit, f'=C4-B4'],
-                    ['曝光访问转化率：', f'=B4/B3', f'=C4/C3', f'=C5-B5'],
-                    ['下单人数：', w1_order_users, w2_order_users, f'=C6-B6'],
-                    ['核销人数：', w1_verify_users, w2_verify_users, f'=C7-B7'],
-                    ['意向转化率：', f'=B6/B4', f'=C6/C4', f'=C8-B8'],
-                    ['下单券数：', w1_order_coupons, w2_order_coupons, f'=C9-B9'],
-                    ['核销券数：', w1_verify_coupons, w2_verify_coupons, f'=C10-B10'],
-                    ['下单售价金额：', round(w1_order_amount, 2), round(w2_order_amount, 2), f'=C11-B11'],
-                    ['核销售价金额：', round(w1_verify_amount, 2), round(w2_verify_amount, 2), f'=C12-B12'],
-                    ['优惠后核销金额：', round(w1_verify_discount, 2), round(w2_verify_discount, 2), f'=C13-B13'],
-                    ['客单价：', w1_avg_price, w2_avg_price, f'=C14-B14'],
-                    ['电话点击：', w1_phone_clicks, w2_phone_clicks, f'=C15-B15'],
-                    ['地址点击：', w1_address, w2_address, f'=C16-B16'],
-                    ['在线咨询：', w1_consult, w2_consult, f'=C17-B17'],
+                    ['指标项/时间周期', week1_period, week2_period, '差值\n（红色为上升/黑色为下降）'],
+                    ['曝光人数：', w1_exposure, w2_exposure, diff_exposure_val],
+                    ['访问人数：', w1_visit, w2_visit, diff_visit_val],
+                    ['曝光访问转化率：', w1_exposure_rate_val, w2_exposure_rate_val, diff_exposure_rate_val],
+                    ['下单人数：', w1_order_users, w2_order_users, diff_order_users_val],
+                    ['核销人数：', w1_verify_users, w2_verify_users, diff_verify_users_val],
+                    ['意向转化率：', w1_intent_rate_val, w2_intent_rate_val, diff_intent_rate_val],
+                    ['下单券数：', w1_order_coupons, w2_order_coupons, diff_order_coupons_val],
+                    ['核销券数：', w1_verify_coupons, w2_verify_coupons, diff_verify_coupons_val],
+                    ['下单售价金额：', round(w1_order_amount, 2), round(w2_order_amount, 2), diff_order_amount_val],
+                    ['核销售价金额：', round(w1_verify_amount, 2), round(w2_verify_amount, 2), diff_verify_amount_val],
+                    ['优惠后核销金额：', round(w1_verify_discount, 2), round(w2_verify_discount, 2), diff_verify_discount_val],
+                    ['客单价：', w1_avg_price, w2_avg_price, diff_avg_price_val],
+                    ['电话点击：', w1_phone_clicks, w2_phone_clicks, diff_phone_val],
+                    ['地址点击：', w1_address, w2_address, diff_address_val],
+                    ['在线咨询：', w1_consult, w2_consult, diff_consult_val],
                     ['门店干预数据', '', '', ''],
-                    ['新增好评：', w1_good_reviews, w2_good_reviews, f'=C19-B19'],
-                    ['留评率：', f'=B19/B7', f'=C19/C7', f'=C20-B20'],
-                    ['门店收藏：', w1_collect, w2_collect, f'=C21-B21'],
-                    ['收藏率：', f'=B21/B6', f'=C21/C6', f'=C22-B22'],
-                    ['打卡人数：', w1_checkin, w2_checkin, f'=C23-B23'],
+                    ['新增好评：', w1_good_reviews, w2_good_reviews, diff_good_reviews_val],
+                    ['留评率：', w1_review_rate_val, w2_review_rate_val, diff_review_rate_val],
+                    ['门店收藏：', w1_collect, w2_collect, diff_collect_val],
+                    ['收藏率：', w1_collect_rate_val, w2_collect_rate_val, diff_collect_rate_val],
+                    ['打卡人数：', w1_checkin, w2_checkin, diff_checkin_val],
                     ['推广通数据', '', '', ''],
-                    ['推广通订单量', w1_promo_orders, w2_promo_orders, f'=C25-B25'],
-                    ['推广通花费', round(w1_promo_cost, 2), round(w2_promo_cost, 2), f'=C26-B26'],
-                    ['推广通曝光（次）', w1_promo_exposure, w2_promo_exposure, f'=C27-B27'],
-                    ['推广通点击（次）', w1_promo_clicks, w2_promo_clicks, f'=C28-B28'],
-                    ['推广通点击均价（元）', w1_click_price, w2_click_price, f'=C29-B29'],
-                    ['查看团购（次）', w1_view_groupbuy, w2_view_groupbuy, f'=C30-B30'],
-                    ['查看电话（次）', w1_view_phone, w2_view_phone, f'=C31-B31'],
+                    ['推广通订单量', w1_promo_orders, w2_promo_orders, diff_promo_orders_val],
+                    ['推广通花费', round(w1_promo_cost, 2), round(w2_promo_cost, 2), diff_promo_cost_val],
+                    ['推广通曝光（次）', w1_promo_exposure, w2_promo_exposure, diff_promo_exposure_val],
+                    ['推广通点击（次）', w1_promo_clicks, w2_promo_clicks, diff_promo_clicks_val],
+                    ['推广通点击均价（元）', w1_click_price, w2_click_price, diff_click_price_val],
+                    ['查看团购（次）', w1_view_groupbuy, w2_view_groupbuy, diff_view_groupbuy_val],
+                    ['查看电话（次）', w1_view_phone, w2_view_phone, diff_view_phone_val],
                 ]
 
                 for row_data in detail_data:
                     ws_detail.append(row_data)
 
+                # 合并门店名单元格 A1:D1
+                ws_detail.merge_cells('A1:D1')
+
                 # 设置详细Sheet样式
                 ws_detail.column_dimensions['A'].width = 22
-                ws_detail.column_dimensions['B'].width = 18
-                ws_detail.column_dimensions['C'].width = 18
-                ws_detail.column_dimensions['D'].width = 20
+                ws_detail.column_dimensions['B'].width = 20
+                ws_detail.column_dimensions['C'].width = 20
+                ws_detail.column_dimensions['D'].width = 25
 
-                # 标题样式
+                # 标题样式 - 门店名居中加粗
                 ws_detail['A1'].font = Font(bold=True, size=12)
-                ws_detail['A2'].font = Font(bold=True, size=10)
+                ws_detail['A1'].alignment = Alignment(horizontal='center', vertical='center')
 
-                # 分类标题
+                # 表头行样式
+                for col in range(1, 5):
+                    cell = ws_detail.cell(row=2, column=col)
+                    cell.font = Font(bold=True, size=10)
+                    cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+                # 分类标题（蓝色）
                 for r in [18, 24]:
                     ws_detail.cell(row=r, column=1).font = Font(bold=True, size=10, color="0066CC")
 
                 # 应用边框
                 apply_border(ws_detail, 1, len(detail_data), 1, 4)
 
-                # 设置差值列条件格式（红色为上升，黑色为下降）
+                # 设置差值列颜色（正数红色，负数黑色）
                 red_font = Font(color="FF0000")
+                black_font = Font(color="000000")
                 for row_num in range(3, len(detail_data) + 1):
+                    if row_num in [18, 24]:  # 跳过分类标题行
+                        continue
                     cell = ws_detail.cell(row=row_num, column=4)
-                    # 公式单元格会自动计算，这里设置数字格式
-                    cell.number_format = '0.00;-0.00'
+                    cell_value = cell.value
+                    # 判断是否为正数（数值或百分比字符串）
+                    is_positive = False
+                    if isinstance(cell_value, (int, float)):
+                        is_positive = cell_value > 0
+                    elif isinstance(cell_value, str) and '%' in cell_value:
+                        try:
+                            num_val = float(cell_value.replace('%', ''))
+                            is_positive = num_val > 0
+                        except:
+                            pass
+                    if is_positive:
+                        cell.font = red_font
 
             except Exception as e:
                 # 捕获错误并打印详细调试信息
@@ -1153,21 +1210,46 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
             bottom=Side(style='thin')
         )
 
+        # 绿色背景（与示例一致）
+        green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+        # 浅灰色背景（差值行）
+        gray_fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
+        # 红色字体（正数差值）
+        red_font = Font(color="FF0000")
+
         for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=16):
             for cell in row:
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-                # 差值行灰色背景
-                if cell.column == 2 and cell.value == '差值':
-                    for c in row:
-                        c.fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
-
-                # 表头行加粗
+                # 表头行（第1列为"门店"或第2列为"数据周期"且第1列为空）- 绿色背景加粗
                 if cell.column == 1 and cell.value == '门店':
                     for c in row:
                         c.font = Font(bold=True, size=10)
-                        c.fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+                        c.fill = green_fill
+                elif cell.column == 2 and cell.value == '数据周期' and ws_summary.cell(row[0].row, 1).value == '':
+                    for c in row:
+                        c.font = Font(bold=True, size=10)
+                        c.fill = green_fill
+
+                # 差值行 - 检查负数并设置红色字体
+                if cell.column == 2 and cell.value == '差值':
+                    for c in row:
+                        c.fill = gray_fill
+                        # 检查每个单元格的值是否为负数
+                        if c.column > 2:  # 跳过门店和数据周期列
+                            val = c.value
+                            is_negative = False
+                            if isinstance(val, (int, float)):
+                                is_negative = val < 0
+                            elif isinstance(val, str):
+                                try:
+                                    num_val = float(val.replace('%', ''))
+                                    is_negative = num_val < 0
+                                except:
+                                    pass
+                            if is_negative:
+                                c.font = red_font
 
         # 保存文件
         if not output_filename:
@@ -1533,64 +1615,130 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
 
                 ws_detail = wb.create_sheet(title=sheet_name)
 
-                # 额外指标
+                # 计算额外指标（直接计算百分比值，不使用公式）
+                p1_exposure_rate_val = f"{calc_rate(p1_visit, p1_exposure)}%" if p1_exposure > 0 else "0%"
+                p2_exposure_rate_val = f"{calc_rate(p2_visit, p2_exposure)}%" if p2_exposure > 0 else "0%"
+                p1_intent_rate_val = f"{calc_rate(p1_order_users, p1_visit)}%" if p1_visit > 0 else "0%"
+                p2_intent_rate_val = f"{calc_rate(p2_order_users, p2_visit)}%" if p2_visit > 0 else "0%"
+                p1_review_rate_val = f"{calc_rate(p1_good_reviews, p1_verify_users)}%" if p1_verify_users > 0 else "0%"
+                p2_review_rate_val = f"{calc_rate(p2_good_reviews, p2_verify_users)}%" if p2_verify_users > 0 else "0%"
+                p1_collect_rate_val = f"{calc_rate(p1_collect, p1_order_users)}%" if p1_order_users > 0 else "0%"
+                p2_collect_rate_val = f"{calc_rate(p2_collect, p2_order_users)}%" if p2_order_users > 0 else "0%"
+
                 p1_checkin = get_val(p1, 'checkin_count')
                 p2_checkin = get_val(p2, 'checkin_count')
 
-                # 构建竖向表格（31行）
+                # 计算差值
+                diff_exposure_val = p2_exposure - p1_exposure
+                diff_visit_val = p2_visit - p1_visit
+                diff_exposure_rate_val = f"{round(calc_rate(p2_visit, p2_exposure) - calc_rate(p1_visit, p1_exposure), 2)}%"
+                diff_order_users_val = p2_order_users - p1_order_users
+                diff_verify_users_val = p2_verify_users - p1_verify_users
+                diff_intent_rate_val = f"{round(calc_rate(p2_order_users, p2_visit) - calc_rate(p1_order_users, p1_visit), 2)}%"
+                diff_order_coupons_val = p2_order_coupons - p1_order_coupons
+                diff_verify_coupons_val = p2_verify_coupons - p1_verify_coupons
+                diff_order_amount_val = round(p2_order_amount - p1_order_amount, 2)
+                diff_verify_amount_val = round(p2_verify_amount - p1_verify_amount, 2)
+                diff_verify_discount_val = round(p2_verify_discount - p1_verify_discount, 2)
+                diff_avg_price_val = round(p2_avg_price - p1_avg_price, 2)
+                diff_phone_val = p2_phone_clicks - p1_phone_clicks
+                diff_address_val = p2_address - p1_address
+                diff_consult_val = p2_consult - p1_consult
+                diff_good_reviews_val = p2_good_reviews - p1_good_reviews
+                diff_review_rate_val = f"{round(calc_rate(p2_good_reviews, p2_verify_users) - calc_rate(p1_good_reviews, p1_verify_users), 2)}%"
+                diff_collect_val = p2_collect - p1_collect
+                diff_collect_rate_val = f"{round(calc_rate(p2_collect, p2_order_users) - calc_rate(p1_collect, p1_order_users), 2)}%"
+                diff_checkin_val = p2_checkin - p1_checkin
+                diff_promo_orders_val = p2_promo_orders - p1_promo_orders
+                diff_promo_cost_val = round(p2_promo_cost - p1_promo_cost, 2)
+                diff_promo_exposure_val = p2_promo_exposure - p1_promo_exposure
+                diff_promo_clicks_val = p2_promo_clicks - p1_promo_clicks
+                diff_click_price_val = round(p2_click_price - p1_click_price, 2)
+                diff_view_groupbuy_val = p2_view_groupbuy - p1_view_groupbuy
+                diff_view_phone_val = p2_view_phone - p1_view_phone
+
+                # 构建竖向表格（31行）- 使用计算后的值而不是公式
                 detail_data = [
                     [shop_name, '', '', ''],
-                    ['指标项/时间周期', period1_str, period2_str, '差值（红涨/黑跌）'],
-                    ['曝光人数：', p1_exposure, p2_exposure, f'=C3-B3'],
-                    ['访问人数：', p1_visit, p2_visit, f'=C4-B4'],
-                    ['曝光访问转化率：', f'=B4/B3', f'=C4/C3', f'=C5-B5'],
-                    ['下单人数：', p1_order_users, p2_order_users, f'=C6-B6'],
-                    ['核销人数：', p1_verify_users, p2_verify_users, f'=C7-B7'],
-                    ['意向转化率：', f'=B6/B4', f'=C6/C4', f'=C8-B8'],
-                    ['下单券数：', p1_order_coupons, p2_order_coupons, f'=C9-B9'],
-                    ['核销券数：', p1_verify_coupons, p2_verify_coupons, f'=C10-B10'],
-                    ['下单售价金额：', round(p1_order_amount, 2), round(p2_order_amount, 2), f'=C11-B11'],
-                    ['核销售价金额：', round(p1_verify_amount, 2), round(p2_verify_amount, 2), f'=C12-B12'],
-                    ['优惠后核销金额：', round(p1_verify_discount, 2), round(p2_verify_discount, 2), f'=C13-B13'],
-                    ['客单价：', p1_avg_price, p2_avg_price, f'=C14-B14'],
-                    ['电话点击：', p1_phone_clicks, p2_phone_clicks, f'=C15-B15'],
-                    ['地址点击：', p1_address, p2_address, f'=C16-B16'],
-                    ['在线咨询：', p1_consult, p2_consult, f'=C17-B17'],
+                    ['指标项/时间周期', period1_str, period2_str, '差值\n（红色为上升/黑色为下降）'],
+                    ['曝光人数：', p1_exposure, p2_exposure, diff_exposure_val],
+                    ['访问人数：', p1_visit, p2_visit, diff_visit_val],
+                    ['曝光访问转化率：', p1_exposure_rate_val, p2_exposure_rate_val, diff_exposure_rate_val],
+                    ['下单人数：', p1_order_users, p2_order_users, diff_order_users_val],
+                    ['核销人数：', p1_verify_users, p2_verify_users, diff_verify_users_val],
+                    ['意向转化率：', p1_intent_rate_val, p2_intent_rate_val, diff_intent_rate_val],
+                    ['下单券数：', p1_order_coupons, p2_order_coupons, diff_order_coupons_val],
+                    ['核销券数：', p1_verify_coupons, p2_verify_coupons, diff_verify_coupons_val],
+                    ['下单售价金额：', round(p1_order_amount, 2), round(p2_order_amount, 2), diff_order_amount_val],
+                    ['核销售价金额：', round(p1_verify_amount, 2), round(p2_verify_amount, 2), diff_verify_amount_val],
+                    ['优惠后核销金额：', round(p1_verify_discount, 2), round(p2_verify_discount, 2), diff_verify_discount_val],
+                    ['客单价：', p1_avg_price, p2_avg_price, diff_avg_price_val],
+                    ['电话点击：', p1_phone_clicks, p2_phone_clicks, diff_phone_val],
+                    ['地址点击：', p1_address, p2_address, diff_address_val],
+                    ['在线咨询：', p1_consult, p2_consult, diff_consult_val],
                     ['门店干预数据', '', '', ''],
-                    ['新增好评：', p1_good_reviews, p2_good_reviews, f'=C19-B19'],
-                    ['留评率：', f'=B19/B7', f'=C19/C7', f'=C20-B20'],
-                    ['门店收藏：', p1_collect, p2_collect, f'=C21-B21'],
-                    ['收藏率：', f'=B21/B6', f'=C21/C6', f'=C22-B22'],
-                    ['打卡人数：', p1_checkin, p2_checkin, f'=C23-B23'],
+                    ['新增好评：', p1_good_reviews, p2_good_reviews, diff_good_reviews_val],
+                    ['留评率：', p1_review_rate_val, p2_review_rate_val, diff_review_rate_val],
+                    ['门店收藏：', p1_collect, p2_collect, diff_collect_val],
+                    ['收藏率：', p1_collect_rate_val, p2_collect_rate_val, diff_collect_rate_val],
+                    ['打卡人数：', p1_checkin, p2_checkin, diff_checkin_val],
                     ['推广通数据', '', '', ''],
-                    ['推广通订单量', p1_promo_orders, p2_promo_orders, f'=C25-B25'],
-                    ['推广通花费', round(p1_promo_cost, 2), round(p2_promo_cost, 2), f'=C26-B26'],
-                    ['推广通曝光（次）', p1_promo_exposure, p2_promo_exposure, f'=C27-B27'],
-                    ['推广通点击（次）', p1_promo_clicks, p2_promo_clicks, f'=C28-B28'],
-                    ['推广通点击均价（元）', p1_click_price, p2_click_price, f'=C29-B29'],
-                    ['查看团购（次）', p1_view_groupbuy, p2_view_groupbuy, f'=C30-B30'],
-                    ['查看电话（次）', p1_view_phone, p2_view_phone, f'=C31-B31'],
+                    ['推广通订单量', p1_promo_orders, p2_promo_orders, diff_promo_orders_val],
+                    ['推广通花费', round(p1_promo_cost, 2), round(p2_promo_cost, 2), diff_promo_cost_val],
+                    ['推广通曝光（次）', p1_promo_exposure, p2_promo_exposure, diff_promo_exposure_val],
+                    ['推广通点击（次）', p1_promo_clicks, p2_promo_clicks, diff_promo_clicks_val],
+                    ['推广通点击均价（元）', p1_click_price, p2_click_price, diff_click_price_val],
+                    ['查看团购（次）', p1_view_groupbuy, p2_view_groupbuy, diff_view_groupbuy_val],
+                    ['查看电话（次）', p1_view_phone, p2_view_phone, diff_view_phone_val],
                 ]
 
                 for row_data in detail_data:
                     ws_detail.append(row_data)
 
+                # 合并门店名单元格 A1:D1
+                ws_detail.merge_cells('A1:D1')
+
                 # 设置详细Sheet样式
                 ws_detail.column_dimensions['A'].width = 22
-                ws_detail.column_dimensions['B'].width = 18
-                ws_detail.column_dimensions['C'].width = 18
-                ws_detail.column_dimensions['D'].width = 20
+                ws_detail.column_dimensions['B'].width = 20
+                ws_detail.column_dimensions['C'].width = 20
+                ws_detail.column_dimensions['D'].width = 25
 
-                # 标题样式
+                # 标题样式 - 门店名居中加粗
                 ws_detail['A1'].font = Font(bold=True, size=12)
-                ws_detail['A2'].font = Font(bold=True, size=10)
+                ws_detail['A1'].alignment = Alignment(horizontal='center', vertical='center')
 
-                # 分类标题
+                # 表头行样式
+                for col in range(1, 5):
+                    cell = ws_detail.cell(row=2, column=col)
+                    cell.font = Font(bold=True, size=10)
+                    cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+                # 分类标题（蓝色）
                 for r in [18, 24]:
                     ws_detail.cell(row=r, column=1).font = Font(bold=True, size=10, color="0066CC")
 
                 # 应用边框
                 apply_border(ws_detail, 1, len(detail_data), 1, 4)
+
+                # 设置差值列颜色（正数红色，负数黑色）
+                red_font = Font(color="FF0000")
+                for row_num in range(3, len(detail_data) + 1):
+                    if row_num in [18, 24]:  # 跳过分类标题行
+                        continue
+                    cell = ws_detail.cell(row=row_num, column=4)
+                    cell_value = cell.value
+                    is_positive = False
+                    if isinstance(cell_value, (int, float)):
+                        is_positive = cell_value > 0
+                    elif isinstance(cell_value, str) and '%' in cell_value:
+                        try:
+                            num_val = float(cell_value.replace('%', ''))
+                            is_positive = num_val > 0
+                        except:
+                            pass
+                    if is_positive:
+                        cell.font = red_font
 
                 seq_num += 1
 
@@ -1636,21 +1784,46 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
             bottom=Side(style='thin')
         )
 
+        # 绿色背景（与示例一致）
+        green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+        # 浅灰色背景（差值行）
+        gray_fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
+        # 红色字体（负数差值）
+        red_font = Font(color="FF0000")
+
         for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=16):
             for cell in row:
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-                # 差值行灰色背景
-                if cell.column == 2 and cell.value == '差值':
-                    for c in row:
-                        c.fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
-
-                # 表头行加粗
+                # 表头行（第1列为"门店"或第2列为"数据周期"且第1列为空）- 绿色背景加粗
                 if cell.column == 1 and cell.value == '门店':
                     for c in row:
                         c.font = Font(bold=True, size=10)
-                        c.fill = PatternFill(start_color="D3D3D3", end_color="D3D3D3", fill_type="solid")
+                        c.fill = green_fill
+                elif cell.column == 2 and cell.value == '数据周期' and ws_summary.cell(row[0].row, 1).value == '':
+                    for c in row:
+                        c.font = Font(bold=True, size=10)
+                        c.fill = green_fill
+
+                # 差值行 - 检查负数并设置红色字体
+                if cell.column == 2 and cell.value == '差值':
+                    for c in row:
+                        c.fill = gray_fill
+                        # 检查每个单元格的值是否为负数
+                        if c.column > 2:  # 跳过门店和数据周期列
+                            val = c.value
+                            is_negative = False
+                            if isinstance(val, (int, float)):
+                                is_negative = val < 0
+                            elif isinstance(val, str):
+                                try:
+                                    num_val = float(val.replace('%', ''))
+                                    is_negative = num_val < 0
+                                except:
+                                    pass
+                            if is_negative:
+                                c.font = red_font
 
         # 保存文件
         if not output_filename:
