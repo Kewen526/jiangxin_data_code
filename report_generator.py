@@ -3,6 +3,7 @@
 """
 江鑫数据报表生成系统
 支持生成：日报、周报、月报、自定义报表
+增加调试信息：出错时打印具体门店和字段
 """
 
 import mysql.connector
@@ -12,7 +13,9 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 from openpyxl.utils import get_column_letter
 from datetime import datetime, timedelta
 import json
+import traceback
 import warnings
+
 warnings.filterwarnings('ignore')
 
 # ==================== 数据库连接池配置 ====================
@@ -34,6 +37,46 @@ CONNECTION_POOL = mysql.connector.pooling.MySQLConnectionPool(
     pool_reset_session=True,
     **DB_CONFIG
 )
+
+
+# ==================== 调试辅助函数 ====================
+def debug_print_row(shop_id, shop_name, data_dict, prefix=""):
+    """
+    打印一行数据的详细信息，用于调试
+    """
+    print(f"\n{'=' * 60}")
+    print(f"🔍 调试信息 - {prefix}")
+    print(f"门店ID: {shop_id}")
+    print(f"门店名称: {shop_name}")
+    print(f"{'=' * 60}")
+
+    if data_dict:
+        for key, value in data_dict.items():
+            value_type = type(value).__name__
+            is_none = "⚠️ NULL" if value is None else ""
+            print(f"  {key}: {value} ({value_type}) {is_none}")
+    else:
+        print("  数据为空（整行数据缺失）")
+    print(f"{'=' * 60}\n")
+
+
+def safe_get_val(data, key, default=0, shop_id=None, shop_name=None, debug=False):
+    """
+    安全获取值，处理None的情况
+    如果debug=True，会打印警告信息
+    """
+    if not data:
+        if debug:
+            print(f"⚠️ 警告: 门店 {shop_name}({shop_id}) 整行数据为空，字段 {key} 使用默认值 {default}")
+        return default
+
+    value = data.get(key)
+    if value is None:
+        if debug:
+            print(f"⚠️ 警告: 门店 {shop_name}({shop_id}) 字段 {key} 为NULL，使用默认值 {default}")
+        return default
+
+    return value
 
 
 # ==================== 辅助函数 ====================
@@ -179,8 +222,10 @@ def get_region_info_mapping(accounts=None):
 
                                     region_mapping[str(shop_id)] = {
                                         'city': city_info.get('regionName', '') if isinstance(city_info, dict) else '',
-                                        'district': district_info.get('regionName', '') if isinstance(district_info, dict) else '',
-                                        'business': business_info.get('regionName', '') if isinstance(business_info, dict) else ''
+                                        'district': district_info.get('regionName', '') if isinstance(district_info,
+                                                                                                      dict) else '',
+                                        'business': business_info.get('regionName', '') if isinstance(business_info,
+                                                                                                      dict) else ''
                                     }
                 except (json.JSONDecodeError, TypeError):
                     pass
@@ -500,8 +545,10 @@ def generate_daily_report(report_date, accounts=None, output_filename=None):
             # 格式化商圈排名
             order_rank = row['order_user_rank']
             verify_rank = row['verify_amount_rank']
-            order_rank_str = f"第{order_rank}名" if order_rank and order_rank < 100 else ("大于100名" if order_rank and order_rank >= 100 else "--")
-            verify_rank_str = f"第{verify_rank}名" if verify_rank and verify_rank < 100 else ("大于100名" if verify_rank and verify_rank >= 100 else "--")
+            order_rank_str = f"第{order_rank}名" if order_rank and order_rank < 100 else (
+                "大于100名" if order_rank and order_rank >= 100 else "--")
+            verify_rank_str = f"第{verify_rank}名" if verify_rank and verify_rank < 100 else (
+                "大于100名" if verify_rank and verify_rank >= 100 else "--")
 
             # 写入汇总数据行
             summary_row = [
@@ -749,6 +796,8 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
             print("警告：没有找到数据")
             return None
 
+        print(f"📊 找到 {len(all_shop_ids)} 个门店数据")
+
         # 创建 Excel
         wb = openpyxl.Workbook()
         ws_summary = wb.active
@@ -758,9 +807,15 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
         week1_period = f"{datetime.strptime(week1_start, '%Y-%m-%d').strftime('%Y.%m.%d')}-{datetime.strptime(week1_end, '%Y-%m-%d').strftime('%Y.%m.%d')}"
         week2_period = f"{datetime.strptime(week2_start, '%Y-%m-%d').strftime('%Y.%m.%d')}-{datetime.strptime(week2_end, '%Y-%m-%d').strftime('%Y.%m.%d')}"
 
-        # 辅助函数
+        # 辅助函数 - 修改为安全版本
         def get_val(data, key, default=0):
-            return data.get(key, default) if data else default
+            """安全获取值，处理None"""
+            if not data:
+                return default
+            value = data.get(key)
+            if value is None:
+                return default
+            return value
 
         def calc_rate(numerator, denominator):
             if denominator and denominator > 0:
@@ -775,6 +830,9 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
         # 用于处理重名 Sheet
         sheet_names_used = {}
 
+        # 记录有问题的门店
+        error_shops = []
+
         # 为每个门店生成数据
         for shop_id in sorted(all_shop_ids):
             w1 = week1_data.get(shop_id, {})
@@ -785,266 +843,297 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
             shop_id_str = str(shop_id)
             shop_info = shop_mapping.get(shop_id_str, {})
 
-            # ==================== 汇总Sheet: 8行/门店 ====================
-            # 第一周指标
-            w1_verify_discount = get_val(w1, 'verify_after_discount')
-            w1_exposure = get_val(w1, 'exposure_users')
-            w1_visit = get_val(w1, 'visit_users')
-            w1_order_users = get_val(w1, 'order_users')
-            w1_order_coupons = get_val(w1, 'order_coupon_count')
-            w1_verify_users = get_val(w1, 'verify_users')
-            w1_verify_coupons = get_val(w1, 'verify_coupon_count')
-            w1_order_amount = get_val(w1, 'order_sale_amount')
-            w1_verify_amount = get_val(w1, 'verify_sale_amount')
-            w1_coupon_orders = get_val(w1, 'coupon_orders')
-            w1_phone_clicks = get_val(w1, 'phone_clicks')
+            try:
+                # ==================== 汇总Sheet: 8行/门店 ====================
+                # 第一周指标
+                w1_verify_discount = get_val(w1, 'verify_after_discount')
+                w1_exposure = get_val(w1, 'exposure_users')
+                w1_visit = get_val(w1, 'visit_users')
+                w1_order_users = get_val(w1, 'order_users')
+                w1_order_coupons = get_val(w1, 'order_coupon_count')
+                w1_verify_users = get_val(w1, 'verify_users')
+                w1_verify_coupons = get_val(w1, 'verify_coupon_count')
+                w1_order_amount = get_val(w1, 'order_sale_amount')
+                w1_verify_amount = get_val(w1, 'verify_sale_amount')
+                w1_coupon_orders = get_val(w1, 'coupon_orders')
+                w1_phone_clicks = get_val(w1, 'phone_clicks')
 
-            w1_exposure_rate = f"{calc_rate(w1_visit, w1_exposure)}%"
-            w1_order_rate = f"{calc_rate(w1_order_users, w1_visit)}%"
-            w1_avg_price = calc_avg_price(w1_verify_discount, w1_verify_users)
+                w1_exposure_rate = f"{calc_rate(w1_visit, w1_exposure)}%"
+                w1_order_rate = f"{calc_rate(w1_order_users, w1_visit)}%"
+                w1_avg_price = calc_avg_price(w1_verify_discount, w1_verify_users)
 
-            # 第二周指标
-            w2_verify_discount = get_val(w2, 'verify_after_discount')
-            w2_exposure = get_val(w2, 'exposure_users')
-            w2_visit = get_val(w2, 'visit_users')
-            w2_order_users = get_val(w2, 'order_users')
-            w2_order_coupons = get_val(w2, 'order_coupon_count')
-            w2_verify_users = get_val(w2, 'verify_users')
-            w2_verify_coupons = get_val(w2, 'verify_coupon_count')
-            w2_order_amount = get_val(w2, 'order_sale_amount')
-            w2_verify_amount = get_val(w2, 'verify_sale_amount')
-            w2_coupon_orders = get_val(w2, 'coupon_orders')
-            w2_phone_clicks = get_val(w2, 'phone_clicks')
+                # 第二周指标
+                w2_verify_discount = get_val(w2, 'verify_after_discount')
+                w2_exposure = get_val(w2, 'exposure_users')
+                w2_visit = get_val(w2, 'visit_users')
+                w2_order_users = get_val(w2, 'order_users')
+                w2_order_coupons = get_val(w2, 'order_coupon_count')
+                w2_verify_users = get_val(w2, 'verify_users')
+                w2_verify_coupons = get_val(w2, 'verify_coupon_count')
+                w2_order_amount = get_val(w2, 'order_sale_amount')
+                w2_verify_amount = get_val(w2, 'verify_sale_amount')
+                w2_coupon_orders = get_val(w2, 'coupon_orders')
+                w2_phone_clicks = get_val(w2, 'phone_clicks')
 
-            w2_exposure_rate = f"{calc_rate(w2_visit, w2_exposure)}%"
-            w2_order_rate = f"{calc_rate(w2_order_users, w2_visit)}%"
-            w2_avg_price = calc_avg_price(w2_verify_discount, w2_verify_users)
+                w2_exposure_rate = f"{calc_rate(w2_visit, w2_exposure)}%"
+                w2_order_rate = f"{calc_rate(w2_order_users, w2_visit)}%"
+                w2_avg_price = calc_avg_price(w2_verify_discount, w2_verify_users)
 
-            # 计算差值
-            diff_verify_discount = round(w2_verify_discount - w1_verify_discount, 2)
-            diff_exposure = w2_exposure - w1_exposure
-            diff_visit = w2_visit - w1_visit
-            diff_order_users = w2_order_users - w1_order_users
-            diff_order_coupons = w2_order_coupons - w1_order_coupons
-            diff_verify_users = w2_verify_users - w1_verify_users
-            diff_verify_coupons = w2_verify_coupons - w1_verify_coupons
-            diff_order_amount = round(w2_order_amount - w1_order_amount, 2)
-            diff_verify_amount = round(w2_verify_amount - w1_verify_amount, 2)
-            diff_coupon_orders = w2_coupon_orders - w1_coupon_orders
-            diff_phone_clicks = w2_phone_clicks - w1_phone_clicks
-            diff_avg_price = round(w2_avg_price - w1_avg_price, 2)
+                # 计算差值
+                diff_verify_discount = round(w2_verify_discount - w1_verify_discount, 2)
+                diff_exposure = w2_exposure - w1_exposure
+                diff_visit = w2_visit - w1_visit
+                diff_order_users = w2_order_users - w1_order_users
+                diff_order_coupons = w2_order_coupons - w1_order_coupons
+                diff_verify_users = w2_verify_users - w1_verify_users
+                diff_verify_coupons = w2_verify_coupons - w1_verify_coupons
+                diff_order_amount = round(w2_order_amount - w1_order_amount, 2)
+                diff_verify_amount = round(w2_verify_amount - w1_verify_amount, 2)
+                diff_coupon_orders = w2_coupon_orders - w1_coupon_orders
+                diff_phone_clicks = w2_phone_clicks - w1_phone_clicks
+                diff_avg_price = round(w2_avg_price - w1_avg_price, 2)
 
-            # 差值百分比
-            def calc_rate_diff(rate1_str, rate2_str):
-                val1 = float(rate1_str.rstrip('%')) if rate1_str != '0%' else 0
-                val2 = float(rate2_str.rstrip('%')) if rate2_str != '0%' else 0
-                return f"{round(val2 - val1, 1)}%"
+                # 差值百分比
+                def calc_rate_diff(rate1_str, rate2_str):
+                    val1 = float(rate1_str.rstrip('%')) if rate1_str != '0%' else 0
+                    val2 = float(rate2_str.rstrip('%')) if rate2_str != '0%' else 0
+                    return f"{round(val2 - val1, 1)}%"
 
-            diff_exposure_rate = calc_rate_diff(w1_exposure_rate, w2_exposure_rate)
-            diff_order_rate = calc_rate_diff(w1_order_rate, w2_order_rate)
+                diff_exposure_rate = calc_rate_diff(w1_exposure_rate, w2_exposure_rate)
+                diff_order_rate = calc_rate_diff(w1_order_rate, w2_order_rate)
 
-            # 行1: 第一周核销数据
-            row1 = [
-                shop_name, week1_period,
-                round(w1_verify_discount, 2), w1_exposure, w1_visit, w1_exposure_rate,
-                w1_order_users, w1_order_coupons, w1_order_rate,
-                w1_verify_users, w1_verify_coupons,
-                round(w1_order_amount, 2), round(w1_verify_amount, 2),
-                w1_coupon_orders, w1_phone_clicks, w1_avg_price
-            ]
-            ws_summary.append(row1)
+                # 行1: 第一周核销数据
+                row1 = [
+                    shop_name, week1_period,
+                    round(w1_verify_discount, 2), w1_exposure, w1_visit, w1_exposure_rate,
+                    w1_order_users, w1_order_coupons, w1_order_rate,
+                    w1_verify_users, w1_verify_coupons,
+                    round(w1_order_amount, 2), round(w1_verify_amount, 2),
+                    w1_coupon_orders, w1_phone_clicks, w1_avg_price
+                ]
+                ws_summary.append(row1)
 
-            # 行2: 第二周核销数据
-            row2 = [
-                shop_name, week2_period,
-                round(w2_verify_discount, 2), w2_exposure, w2_visit, w2_exposure_rate,
-                w2_order_users, w2_order_coupons, w2_order_rate,
-                w2_verify_users, w2_verify_coupons,
-                round(w2_order_amount, 2), round(w2_verify_amount, 2),
-                w2_coupon_orders, w2_phone_clicks, w2_avg_price
-            ]
-            ws_summary.append(row2)
+                # 行2: 第二周核销数据
+                row2 = [
+                    shop_name, week2_period,
+                    round(w2_verify_discount, 2), w2_exposure, w2_visit, w2_exposure_rate,
+                    w2_order_users, w2_order_coupons, w2_order_rate,
+                    w2_verify_users, w2_verify_coupons,
+                    round(w2_order_amount, 2), round(w2_verify_amount, 2),
+                    w2_coupon_orders, w2_phone_clicks, w2_avg_price
+                ]
+                ws_summary.append(row2)
 
-            # 行3: 差值
-            row3 = [
-                shop_name, '差值',
-                diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
-                diff_order_users, diff_order_coupons, diff_order_rate,
-                diff_verify_users, diff_verify_coupons,
-                diff_order_amount, diff_verify_amount,
-                diff_coupon_orders, diff_phone_clicks, diff_avg_price
-            ]
-            ws_summary.append(row3)
+                # 行3: 差值
+                row3 = [
+                    shop_name, '差值',
+                    diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
+                    diff_order_users, diff_order_coupons, diff_order_rate,
+                    diff_verify_users, diff_verify_coupons,
+                    diff_order_amount, diff_verify_amount,
+                    diff_coupon_orders, diff_phone_clicks, diff_avg_price
+                ]
+                ws_summary.append(row3)
 
-            # 行4: 推广通表头
-            header_row = [
-                '门店', '数据周期', '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
-                '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
-                '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
-            ]
-            ws_summary.append(header_row)
+                # 行4: 推广通表头
+                header_row = [
+                    '门店', '数据周期', '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
+                    '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
+                    '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
+                ]
+                ws_summary.append(header_row)
 
-            # 推广通相关数据
-            w1_promo_cost = get_val(w1, 'promotion_cost')
-            w1_promo_exposure = get_val(w1, 'promotion_exposure')
-            w1_promo_clicks = get_val(w1, 'promotion_clicks')
-            w1_promo_orders = get_val(w1, 'promotion_orders')
-            w1_view_groupbuy = get_val(w1, 'view_groupbuy')
-            w1_view_phone = get_val(w1, 'view_phone')
-            w1_consult = get_val(w1, 'consult_users')
-            w1_address = get_val(w1, 'address_clicks')
-            w1_collect = get_val(w1, 'new_collect')
-            w1_good_reviews = get_val(w1, 'new_good_reviews')
+                # 推广通相关数据
+                w1_promo_cost = get_val(w1, 'promotion_cost')
+                w1_promo_exposure = get_val(w1, 'promotion_exposure')
+                w1_promo_clicks = get_val(w1, 'promotion_clicks')
+                w1_promo_orders = get_val(w1, 'promotion_orders')
+                w1_view_groupbuy = get_val(w1, 'view_groupbuy')
+                w1_view_phone = get_val(w1, 'view_phone')
+                w1_consult = get_val(w1, 'consult_users')
+                w1_address = get_val(w1, 'address_clicks')
+                w1_collect = get_val(w1, 'new_collect')
+                w1_good_reviews = get_val(w1, 'new_good_reviews')
 
-            w1_click_price = calc_avg_price(w1_promo_cost, w1_promo_clicks)
-            w1_promo_rate = f"{calc_rate(w1_promo_orders, w1_promo_clicks)}%"
-            w1_collect_rate = f"{calc_rate(w1_collect, w1_visit)}%"
-            w1_review_rate = f"{calc_rate(w1_good_reviews, w1_verify_users)}%"
+                w1_click_price = calc_avg_price(w1_promo_cost, w1_promo_clicks)
+                w1_promo_rate = f"{calc_rate(w1_promo_orders, w1_promo_clicks)}%"
+                w1_collect_rate = f"{calc_rate(w1_collect, w1_visit)}%"
+                w1_review_rate = f"{calc_rate(w1_good_reviews, w1_verify_users)}%"
 
-            w2_promo_cost = get_val(w2, 'promotion_cost')
-            w2_promo_exposure = get_val(w2, 'promotion_exposure')
-            w2_promo_clicks = get_val(w2, 'promotion_clicks')
-            w2_promo_orders = get_val(w2, 'promotion_orders')
-            w2_view_groupbuy = get_val(w2, 'view_groupbuy')
-            w2_view_phone = get_val(w2, 'view_phone')
-            w2_consult = get_val(w2, 'consult_users')
-            w2_address = get_val(w2, 'address_clicks')
-            w2_collect = get_val(w2, 'new_collect')
-            w2_good_reviews = get_val(w2, 'new_good_reviews')
+                w2_promo_cost = get_val(w2, 'promotion_cost')
+                w2_promo_exposure = get_val(w2, 'promotion_exposure')
+                w2_promo_clicks = get_val(w2, 'promotion_clicks')
+                w2_promo_orders = get_val(w2, 'promotion_orders')
+                w2_view_groupbuy = get_val(w2, 'view_groupbuy')
+                w2_view_phone = get_val(w2, 'view_phone')
+                w2_consult = get_val(w2, 'consult_users')
+                w2_address = get_val(w2, 'address_clicks')
+                w2_collect = get_val(w2, 'new_collect')
+                w2_good_reviews = get_val(w2, 'new_good_reviews')
 
-            w2_click_price = calc_avg_price(w2_promo_cost, w2_promo_clicks)
-            w2_promo_rate = f"{calc_rate(w2_promo_orders, w2_promo_clicks)}%"
-            w2_collect_rate = f"{calc_rate(w2_collect, w2_visit)}%"
-            w2_review_rate = f"{calc_rate(w2_good_reviews, w2_verify_users)}%"
+                w2_click_price = calc_avg_price(w2_promo_cost, w2_promo_clicks)
+                w2_promo_rate = f"{calc_rate(w2_promo_orders, w2_promo_clicks)}%"
+                w2_collect_rate = f"{calc_rate(w2_collect, w2_visit)}%"
+                w2_review_rate = f"{calc_rate(w2_good_reviews, w2_verify_users)}%"
 
-            # 差值
-            diff_promo_cost = round(w2_promo_cost - w1_promo_cost, 2)
-            diff_promo_exposure = w2_promo_exposure - w1_promo_exposure
-            diff_promo_clicks = w2_promo_clicks - w1_promo_clicks
-            diff_click_price = round(w2_click_price - w1_click_price, 2)
-            diff_promo_orders = w2_promo_orders - w1_promo_orders
-            diff_promo_rate = calc_rate_diff(w1_promo_rate, w2_promo_rate)
-            diff_view_groupbuy = w2_view_groupbuy - w1_view_groupbuy
-            diff_view_phone = w2_view_phone - w1_view_phone
-            diff_consult = w2_consult - w1_consult
-            diff_address = w2_address - w1_address
-            diff_collect = w2_collect - w1_collect
-            diff_collect_rate = calc_rate_diff(w1_collect_rate, w2_collect_rate)
-            diff_good_reviews = w2_good_reviews - w1_good_reviews
-            diff_review_rate = calc_rate_diff(w1_review_rate, w2_review_rate)
+                # 差值
+                diff_promo_cost = round(w2_promo_cost - w1_promo_cost, 2)
+                diff_promo_exposure = w2_promo_exposure - w1_promo_exposure
+                diff_promo_clicks = w2_promo_clicks - w1_promo_clicks
+                diff_click_price = round(w2_click_price - w1_click_price, 2)
+                diff_promo_orders = w2_promo_orders - w1_promo_orders
+                diff_promo_rate = calc_rate_diff(w1_promo_rate, w2_promo_rate)
+                diff_view_groupbuy = w2_view_groupbuy - w1_view_groupbuy
+                diff_view_phone = w2_view_phone - w1_view_phone
+                diff_consult = w2_consult - w1_consult
+                diff_address = w2_address - w1_address
+                diff_collect = w2_collect - w1_collect
+                diff_collect_rate = calc_rate_diff(w1_collect_rate, w2_collect_rate)
+                diff_good_reviews = w2_good_reviews - w1_good_reviews
+                diff_review_rate = calc_rate_diff(w1_review_rate, w2_review_rate)
 
-            # 行5: 第一周推广通数据
-            row5 = [
-                shop_name, week1_period,
-                round(w1_promo_cost, 2), w1_promo_exposure, w1_promo_clicks, w1_click_price,
-                w1_promo_orders, w1_promo_rate, w1_view_groupbuy, w1_view_phone,
-                w1_consult, w1_address, w1_collect, w1_collect_rate,
-                w1_good_reviews, w1_review_rate
-            ]
-            ws_summary.append(row5)
+                # 行5: 第一周推广通数据
+                row5 = [
+                    shop_name, week1_period,
+                    round(w1_promo_cost, 2), w1_promo_exposure, w1_promo_clicks, w1_click_price,
+                    w1_promo_orders, w1_promo_rate, w1_view_groupbuy, w1_view_phone,
+                    w1_consult, w1_address, w1_collect, w1_collect_rate,
+                    w1_good_reviews, w1_review_rate
+                ]
+                ws_summary.append(row5)
 
-            # 行6: 第二周推广通数据
-            row6 = [
-                shop_name, week2_period,
-                round(w2_promo_cost, 2), w2_promo_exposure, w2_promo_clicks, w2_click_price,
-                w2_promo_orders, w2_promo_rate, w2_view_groupbuy, w2_view_phone,
-                w2_consult, w2_address, w2_collect, w2_collect_rate,
-                w2_good_reviews, w2_review_rate
-            ]
-            ws_summary.append(row6)
+                # 行6: 第二周推广通数据
+                row6 = [
+                    shop_name, week2_period,
+                    round(w2_promo_cost, 2), w2_promo_exposure, w2_promo_clicks, w2_click_price,
+                    w2_promo_orders, w2_promo_rate, w2_view_groupbuy, w2_view_phone,
+                    w2_consult, w2_address, w2_collect, w2_collect_rate,
+                    w2_good_reviews, w2_review_rate
+                ]
+                ws_summary.append(row6)
 
-            # 行7: 推广通差值
-            row7 = [
-                shop_name, '差值',
-                diff_promo_cost, diff_promo_exposure, diff_promo_clicks, diff_click_price,
-                diff_promo_orders, diff_promo_rate, diff_view_groupbuy, diff_view_phone,
-                diff_consult, diff_address, diff_collect, diff_collect_rate,
-                diff_good_reviews, diff_review_rate
-            ]
-            ws_summary.append(row7)
+                # 行7: 推广通差值
+                row7 = [
+                    shop_name, '差值',
+                    diff_promo_cost, diff_promo_exposure, diff_promo_clicks, diff_click_price,
+                    diff_promo_orders, diff_promo_rate, diff_view_groupbuy, diff_view_phone,
+                    diff_consult, diff_address, diff_collect, diff_collect_rate,
+                    diff_good_reviews, diff_review_rate
+                ]
+                ws_summary.append(row7)
 
-            # 行8: 空行分隔
-            ws_summary.append([''] * 16)
+                # 行8: 空行分隔
+                ws_summary.append([''] * 16)
 
-            # ==================== 门店详细Sheet（竖向31行）====================
-            sheet_name = clean_sheet_name(shop_name)
-            if sheet_name in sheet_names_used:
-                sheet_names_used[sheet_name] += 1
-                sheet_name = f"{sheet_name[:28]}_{sheet_names_used[sheet_name]}"
-            else:
-                sheet_names_used[sheet_name] = 1
+                # ==================== 门店详细Sheet（竖向31行）====================
+                sheet_name = clean_sheet_name(shop_name)
+                if sheet_name in sheet_names_used:
+                    sheet_names_used[sheet_name] += 1
+                    sheet_name = f"{sheet_name[:28]}_{sheet_names_used[sheet_name]}"
+                else:
+                    sheet_names_used[sheet_name] = 1
 
-            ws_detail = wb.create_sheet(title=sheet_name)
+                ws_detail = wb.create_sheet(title=sheet_name)
 
-            # 计算额外指标
-            w1_intent_rate = calc_rate(w1_order_users, w1_visit)
-            w2_intent_rate = calc_rate(w2_order_users, w2_visit)
-            w1_checkin = get_val(w1, 'checkin_count')
-            w2_checkin = get_val(w2, 'checkin_count')
-            w1_reviews = get_val(w1, 'new_reviews')
-            w2_reviews = get_val(w2, 'new_reviews')
+                # 计算额外指标
+                w1_intent_rate = calc_rate(w1_order_users, w1_visit)
+                w2_intent_rate = calc_rate(w2_order_users, w2_visit)
+                w1_checkin = get_val(w1, 'checkin_count')
+                w2_checkin = get_val(w2, 'checkin_count')
+                w1_reviews = get_val(w1, 'new_reviews')
+                w2_reviews = get_val(w2, 'new_reviews')
 
-            # 构建竖向表格（31行）
-            detail_data = [
-                [shop_name, '', '', ''],
-                ['指标项/时间周期', week1_period, week2_period, '差值（红涨/黑跌）'],
-                ['曝光人数：', w1_exposure, w2_exposure, f'=C3-B3'],
-                ['访问人数：', w1_visit, w2_visit, f'=C4-B4'],
-                ['曝光访问转化率：', f'=B4/B3', f'=C4/C3', f'=C5-B5'],
-                ['下单人数：', w1_order_users, w2_order_users, f'=C6-B6'],
-                ['核销人数：', w1_verify_users, w2_verify_users, f'=C7-B7'],
-                ['意向转化率：', f'=B6/B4', f'=C6/C4', f'=C8-B8'],
-                ['下单券数：', w1_order_coupons, w2_order_coupons, f'=C9-B9'],
-                ['核销券数：', w1_verify_coupons, w2_verify_coupons, f'=C10-B10'],
-                ['下单售价金额：', round(w1_order_amount, 2), round(w2_order_amount, 2), f'=C11-B11'],
-                ['核销售价金额：', round(w1_verify_amount, 2), round(w2_verify_amount, 2), f'=C12-B12'],
-                ['优惠后核销金额：', round(w1_verify_discount, 2), round(w2_verify_discount, 2), f'=C13-B13'],
-                ['客单价：', w1_avg_price, w2_avg_price, f'=C14-B14'],
-                ['电话点击：', w1_phone_clicks, w2_phone_clicks, f'=C15-B15'],
-                ['地址点击：', w1_address, w2_address, f'=C16-B16'],
-                ['在线咨询：', w1_consult, w2_consult, f'=C17-B17'],
-                ['门店干预数据', '', '', ''],
-                ['新增好评：', w1_good_reviews, w2_good_reviews, f'=C19-B19'],
-                ['留评率：', f'=B19/B7', f'=C19/C7', f'=C20-B20'],
-                ['门店收藏：', w1_collect, w2_collect, f'=C21-B21'],
-                ['收藏率：', f'=B21/B6', f'=C21/C6', f'=C22-B22'],
-                ['打卡人数：', w1_checkin, w2_checkin, f'=C23-B23'],
-                ['推广通数据', '', '', ''],
-                ['推广通订单量', w1_promo_orders, w2_promo_orders, f'=C25-B25'],
-                ['推广通花费', round(w1_promo_cost, 2), round(w2_promo_cost, 2), f'=C26-B26'],
-                ['推广通曝光（次）', w1_promo_exposure, w2_promo_exposure, f'=C27-B27'],
-                ['推广通点击（次）', w1_promo_clicks, w2_promo_clicks, f'=C28-B28'],
-                ['推广通点击均价（元）', w1_click_price, w2_click_price, f'=C29-B29'],
-                ['查看团购（次）', w1_view_groupbuy, w2_view_groupbuy, f'=C30-B30'],
-                ['查看电话（次）', w1_view_phone, w2_view_phone, f'=C31-B31'],
-            ]
+                # 构建竖向表格（31行）
+                detail_data = [
+                    [shop_name, '', '', ''],
+                    ['指标项/时间周期', week1_period, week2_period, '差值（红涨/黑跌）'],
+                    ['曝光人数：', w1_exposure, w2_exposure, f'=C3-B3'],
+                    ['访问人数：', w1_visit, w2_visit, f'=C4-B4'],
+                    ['曝光访问转化率：', f'=B4/B3', f'=C4/C3', f'=C5-B5'],
+                    ['下单人数：', w1_order_users, w2_order_users, f'=C6-B6'],
+                    ['核销人数：', w1_verify_users, w2_verify_users, f'=C7-B7'],
+                    ['意向转化率：', f'=B6/B4', f'=C6/C4', f'=C8-B8'],
+                    ['下单券数：', w1_order_coupons, w2_order_coupons, f'=C9-B9'],
+                    ['核销券数：', w1_verify_coupons, w2_verify_coupons, f'=C10-B10'],
+                    ['下单售价金额：', round(w1_order_amount, 2), round(w2_order_amount, 2), f'=C11-B11'],
+                    ['核销售价金额：', round(w1_verify_amount, 2), round(w2_verify_amount, 2), f'=C12-B12'],
+                    ['优惠后核销金额：', round(w1_verify_discount, 2), round(w2_verify_discount, 2), f'=C13-B13'],
+                    ['客单价：', w1_avg_price, w2_avg_price, f'=C14-B14'],
+                    ['电话点击：', w1_phone_clicks, w2_phone_clicks, f'=C15-B15'],
+                    ['地址点击：', w1_address, w2_address, f'=C16-B16'],
+                    ['在线咨询：', w1_consult, w2_consult, f'=C17-B17'],
+                    ['门店干预数据', '', '', ''],
+                    ['新增好评：', w1_good_reviews, w2_good_reviews, f'=C19-B19'],
+                    ['留评率：', f'=B19/B7', f'=C19/C7', f'=C20-B20'],
+                    ['门店收藏：', w1_collect, w2_collect, f'=C21-B21'],
+                    ['收藏率：', f'=B21/B6', f'=C21/C6', f'=C22-B22'],
+                    ['打卡人数：', w1_checkin, w2_checkin, f'=C23-B23'],
+                    ['推广通数据', '', '', ''],
+                    ['推广通订单量', w1_promo_orders, w2_promo_orders, f'=C25-B25'],
+                    ['推广通花费', round(w1_promo_cost, 2), round(w2_promo_cost, 2), f'=C26-B26'],
+                    ['推广通曝光（次）', w1_promo_exposure, w2_promo_exposure, f'=C27-B27'],
+                    ['推广通点击（次）', w1_promo_clicks, w2_promo_clicks, f'=C28-B28'],
+                    ['推广通点击均价（元）', w1_click_price, w2_click_price, f'=C29-B29'],
+                    ['查看团购（次）', w1_view_groupbuy, w2_view_groupbuy, f'=C30-B30'],
+                    ['查看电话（次）', w1_view_phone, w2_view_phone, f'=C31-B31'],
+                ]
 
-            for row_data in detail_data:
-                ws_detail.append(row_data)
+                for row_data in detail_data:
+                    ws_detail.append(row_data)
 
-            # 设置详细Sheet样式
-            ws_detail.column_dimensions['A'].width = 22
-            ws_detail.column_dimensions['B'].width = 18
-            ws_detail.column_dimensions['C'].width = 18
-            ws_detail.column_dimensions['D'].width = 20
+                # 设置详细Sheet样式
+                ws_detail.column_dimensions['A'].width = 22
+                ws_detail.column_dimensions['B'].width = 18
+                ws_detail.column_dimensions['C'].width = 18
+                ws_detail.column_dimensions['D'].width = 20
 
-            # 标题样式
-            ws_detail['A1'].font = Font(bold=True, size=12)
-            ws_detail['A2'].font = Font(bold=True, size=10)
+                # 标题样式
+                ws_detail['A1'].font = Font(bold=True, size=12)
+                ws_detail['A2'].font = Font(bold=True, size=10)
 
-            # 分类标题
-            for r in [18, 24]:
-                ws_detail.cell(row=r, column=1).font = Font(bold=True, size=10, color="0066CC")
+                # 分类标题
+                for r in [18, 24]:
+                    ws_detail.cell(row=r, column=1).font = Font(bold=True, size=10, color="0066CC")
 
-            # 应用边框
-            apply_border(ws_detail, 1, len(detail_data), 1, 4)
+                # 应用边框
+                apply_border(ws_detail, 1, len(detail_data), 1, 4)
 
-            # 设置差值列条件格式（红色为上升，黑色为下降）
-            red_font = Font(color="FF0000")
-            for row_num in range(3, len(detail_data) + 1):
-                cell = ws_detail.cell(row=row_num, column=4)
-                # 公式单元格会自动计算，这里设置数字格式
-                cell.number_format = '0.00;-0.00'
+                # 设置差值列条件格式（红色为上升，黑色为下降）
+                red_font = Font(color="FF0000")
+                for row_num in range(3, len(detail_data) + 1):
+                    cell = ws_detail.cell(row=row_num, column=4)
+                    # 公式单元格会自动计算，这里设置数字格式
+                    cell.number_format = '0.00;-0.00'
+
+            except Exception as e:
+                # 捕获错误并打印详细调试信息
+                print(f"\n{'❌' * 30}")
+                print(f"❌ 处理门店时出错: {shop_name} (ID: {shop_id})")
+                print(f"❌ 错误类型: {type(e).__name__}")
+                print(f"❌ 错误信息: {str(e)}")
+                print(f"{'❌' * 30}")
+
+                # 打印第一周数据
+                debug_print_row(shop_id, shop_name, w1, "第一周数据 (week1_data)")
+
+                # 打印第二周数据
+                debug_print_row(shop_id, shop_name, w2, "第二周数据 (week2_data)")
+
+                # 打印完整的堆栈跟踪
+                print("\n📋 完整错误堆栈:")
+                traceback.print_exc()
+
+                # 记录出错的门店
+                error_shops.append({
+                    'shop_id': shop_id,
+                    'shop_name': shop_name,
+                    'error': str(e),
+                    'w1_data': w1,
+                    'w2_data': w2
+                })
+
+                # 继续处理下一个门店
+                continue
 
         # 汇总表样式
         for i in range(1, 17):
@@ -1079,6 +1168,15 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
             output_filename = f"周报 非餐 {week2_start.replace('-', '')}~{week2_end.replace('-', '')} {datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
 
         wb.save(output_filename)
+
+        # 打印汇总信息
+        if error_shops:
+            print(f"\n{'=' * 60}")
+            print(f"⚠️ 警告: 有 {len(error_shops)} 个门店处理失败:")
+            for err in error_shops:
+                print(f"  - {err['shop_name']} (ID: {err['shop_id']}): {err['error']}")
+            print(f"{'=' * 60}")
+
         print(f"✅ 周报生成成功: {output_filename}")
         return output_filename
 
@@ -1185,6 +1283,8 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
             print("警告：没有找到数据")
             return None
 
+        print(f"📊 找到 {len(all_shop_ids_set)} 个门店数据")
+
         # 创建 Excel
         wb = openpyxl.Workbook()
         ws_summary = wb.active
@@ -1194,9 +1294,15 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
         period1_str = f"{datetime.strptime(period1_start, '%Y-%m-%d').strftime('%Y.%m.%d')}-{datetime.strptime(period1_end, '%Y-%m-%d').strftime('%Y.%m.%d')}"
         period2_str = f"{datetime.strptime(period2_start, '%Y-%m-%d').strftime('%Y.%m.%d')}-{datetime.strptime(period2_end, '%Y-%m-%d').strftime('%Y.%m.%d')}"
 
-        # 辅助函数
+        # 辅助函数 - 安全版本
         def get_val(data, key, default=0):
-            return data.get(key, default) if data else default
+            """安全获取值，处理None"""
+            if not data:
+                return default
+            value = data.get(key)
+            if value is None:
+                return default
+            return value
 
         def calc_rate(numerator, denominator):
             if denominator and denominator > 0:
@@ -1212,6 +1318,9 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
         sheet_names_used = {}
         seq_num = 1
 
+        # 记录有问题的门店
+        error_shops = []
+
         for shop_id in sorted(all_shop_ids_set):
             p1 = period1_data.get(shop_id, {})
             p2 = period2_data.get(shop_id, {})
@@ -1224,236 +1333,267 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
             sales = shop_info.get('sales', '')
             city = shop_info.get('city', '')
 
-            # ==================== 汇总表数据（与周报相同的8行结构）====================
-            # 时期1指标
-            p1_verify_discount = get_val(p1, 'verify_after_discount')
-            p1_exposure = get_val(p1, 'exposure_users')
-            p1_visit = get_val(p1, 'visit_users')
-            p1_order_users = get_val(p1, 'order_users')
-            p1_order_coupons = get_val(p1, 'order_coupon_count')
-            p1_verify_users = get_val(p1, 'verify_users')
-            p1_verify_coupons = get_val(p1, 'verify_coupon_count')
-            p1_order_amount = get_val(p1, 'order_sale_amount')
-            p1_verify_amount = get_val(p1, 'verify_sale_amount')
-            p1_coupon_orders = get_val(p1, 'coupon_orders')
-            p1_phone_clicks = get_val(p1, 'phone_clicks')
+            try:
+                # ==================== 汇总表数据（与周报相同的8行结构）====================
+                # 时期1指标
+                p1_verify_discount = get_val(p1, 'verify_after_discount')
+                p1_exposure = get_val(p1, 'exposure_users')
+                p1_visit = get_val(p1, 'visit_users')
+                p1_order_users = get_val(p1, 'order_users')
+                p1_order_coupons = get_val(p1, 'order_coupon_count')
+                p1_verify_users = get_val(p1, 'verify_users')
+                p1_verify_coupons = get_val(p1, 'verify_coupon_count')
+                p1_order_amount = get_val(p1, 'order_sale_amount')
+                p1_verify_amount = get_val(p1, 'verify_sale_amount')
+                p1_coupon_orders = get_val(p1, 'coupon_orders')
+                p1_phone_clicks = get_val(p1, 'phone_clicks')
 
-            p1_exposure_rate = f"{calc_rate(p1_visit, p1_exposure)}%"
-            p1_order_rate = f"{calc_rate(p1_order_users, p1_visit)}%"
-            p1_avg_price = calc_avg_price(p1_verify_discount, p1_verify_users)
+                p1_exposure_rate = f"{calc_rate(p1_visit, p1_exposure)}%"
+                p1_order_rate = f"{calc_rate(p1_order_users, p1_visit)}%"
+                p1_avg_price = calc_avg_price(p1_verify_discount, p1_verify_users)
 
-            # 时期2指标
-            p2_verify_discount = get_val(p2, 'verify_after_discount')
-            p2_exposure = get_val(p2, 'exposure_users')
-            p2_visit = get_val(p2, 'visit_users')
-            p2_order_users = get_val(p2, 'order_users')
-            p2_order_coupons = get_val(p2, 'order_coupon_count')
-            p2_verify_users = get_val(p2, 'verify_users')
-            p2_verify_coupons = get_val(p2, 'verify_coupon_count')
-            p2_order_amount = get_val(p2, 'order_sale_amount')
-            p2_verify_amount = get_val(p2, 'verify_sale_amount')
-            p2_coupon_orders = get_val(p2, 'coupon_orders')
-            p2_phone_clicks = get_val(p2, 'phone_clicks')
+                # 时期2指标
+                p2_verify_discount = get_val(p2, 'verify_after_discount')
+                p2_exposure = get_val(p2, 'exposure_users')
+                p2_visit = get_val(p2, 'visit_users')
+                p2_order_users = get_val(p2, 'order_users')
+                p2_order_coupons = get_val(p2, 'order_coupon_count')
+                p2_verify_users = get_val(p2, 'verify_users')
+                p2_verify_coupons = get_val(p2, 'verify_coupon_count')
+                p2_order_amount = get_val(p2, 'order_sale_amount')
+                p2_verify_amount = get_val(p2, 'verify_sale_amount')
+                p2_coupon_orders = get_val(p2, 'coupon_orders')
+                p2_phone_clicks = get_val(p2, 'phone_clicks')
 
-            p2_exposure_rate = f"{calc_rate(p2_visit, p2_exposure)}%"
-            p2_order_rate = f"{calc_rate(p2_order_users, p2_visit)}%"
-            p2_avg_price = calc_avg_price(p2_verify_discount, p2_verify_users)
+                p2_exposure_rate = f"{calc_rate(p2_visit, p2_exposure)}%"
+                p2_order_rate = f"{calc_rate(p2_order_users, p2_visit)}%"
+                p2_avg_price = calc_avg_price(p2_verify_discount, p2_verify_users)
 
-            # 差值计算
-            diff_verify_discount = round(p2_verify_discount - p1_verify_discount, 2)
-            diff_exposure = p2_exposure - p1_exposure
-            diff_visit = p2_visit - p1_visit
+                # 差值计算
+                diff_verify_discount = round(p2_verify_discount - p1_verify_discount, 2)
+                diff_exposure = p2_exposure - p1_exposure
+                diff_visit = p2_visit - p1_visit
 
-            def calc_rate_diff(rate1_str, rate2_str):
-                val1 = float(rate1_str.rstrip('%')) if rate1_str != '0%' else 0
-                val2 = float(rate2_str.rstrip('%')) if rate2_str != '0%' else 0
-                return f"{round(val2 - val1, 1)}%"
+                def calc_rate_diff(rate1_str, rate2_str):
+                    val1 = float(rate1_str.rstrip('%')) if rate1_str != '0%' else 0
+                    val2 = float(rate2_str.rstrip('%')) if rate2_str != '0%' else 0
+                    return f"{round(val2 - val1, 1)}%"
 
-            diff_exposure_rate = calc_rate_diff(p1_exposure_rate, p2_exposure_rate)
-            diff_order_users = p2_order_users - p1_order_users
-            diff_order_coupons = p2_order_coupons - p1_order_coupons
-            diff_order_rate = calc_rate_diff(p1_order_rate, p2_order_rate)
-            diff_verify_users = p2_verify_users - p1_verify_users
-            diff_verify_coupons = p2_verify_coupons - p1_verify_coupons
-            diff_order_amount = round(p2_order_amount - p1_order_amount, 2)
-            diff_verify_amount = round(p2_verify_amount - p1_verify_amount, 2)
-            diff_coupon_orders = p2_coupon_orders - p1_coupon_orders
-            diff_phone_clicks = p2_phone_clicks - p1_phone_clicks
-            diff_avg_price = round(p2_avg_price - p1_avg_price, 2)
+                diff_exposure_rate = calc_rate_diff(p1_exposure_rate, p2_exposure_rate)
+                diff_order_users = p2_order_users - p1_order_users
+                diff_order_coupons = p2_order_coupons - p1_order_coupons
+                diff_order_rate = calc_rate_diff(p1_order_rate, p2_order_rate)
+                diff_verify_users = p2_verify_users - p1_verify_users
+                diff_verify_coupons = p2_verify_coupons - p1_verify_coupons
+                diff_order_amount = round(p2_order_amount - p1_order_amount, 2)
+                diff_verify_amount = round(p2_verify_amount - p1_verify_amount, 2)
+                diff_coupon_orders = p2_coupon_orders - p1_coupon_orders
+                diff_phone_clicks = p2_phone_clicks - p1_phone_clicks
+                diff_avg_price = round(p2_avg_price - p1_avg_price, 2)
 
-            # 推广通数据
-            p1_promo_cost = get_val(p1, 'promotion_cost')
-            p1_promo_exposure = get_val(p1, 'promotion_exposure')
-            p1_promo_clicks = get_val(p1, 'promotion_clicks')
-            p1_promo_orders = get_val(p1, 'promotion_orders')
-            p1_view_groupbuy = get_val(p1, 'view_groupbuy')
-            p1_view_phone = get_val(p1, 'view_phone')
-            p1_consult = get_val(p1, 'consult_users')
-            p1_address = get_val(p1, 'address_clicks')
-            p1_collect = get_val(p1, 'new_collect')
-            p1_good_reviews = get_val(p1, 'new_good_reviews')
-            p1_click_price = calc_avg_price(p1_promo_cost, p1_promo_clicks)
-            p1_promo_rate = f"{calc_rate(p1_promo_orders, p1_promo_clicks)}%"
-            p1_collect_rate = f"{calc_rate(p1_collect, p1_visit)}%"
-            p1_review_rate = f"{calc_rate(p1_good_reviews, p1_verify_users)}%"
+                # 推广通数据
+                p1_promo_cost = get_val(p1, 'promotion_cost')
+                p1_promo_exposure = get_val(p1, 'promotion_exposure')
+                p1_promo_clicks = get_val(p1, 'promotion_clicks')
+                p1_promo_orders = get_val(p1, 'promotion_orders')
+                p1_view_groupbuy = get_val(p1, 'view_groupbuy')
+                p1_view_phone = get_val(p1, 'view_phone')
+                p1_consult = get_val(p1, 'consult_users')
+                p1_address = get_val(p1, 'address_clicks')
+                p1_collect = get_val(p1, 'new_collect')
+                p1_good_reviews = get_val(p1, 'new_good_reviews')
+                p1_click_price = calc_avg_price(p1_promo_cost, p1_promo_clicks)
+                p1_promo_rate = f"{calc_rate(p1_promo_orders, p1_promo_clicks)}%"
+                p1_collect_rate = f"{calc_rate(p1_collect, p1_visit)}%"
+                p1_review_rate = f"{calc_rate(p1_good_reviews, p1_verify_users)}%"
 
-            p2_promo_cost = get_val(p2, 'promotion_cost')
-            p2_promo_exposure = get_val(p2, 'promotion_exposure')
-            p2_promo_clicks = get_val(p2, 'promotion_clicks')
-            p2_promo_orders = get_val(p2, 'promotion_orders')
-            p2_view_groupbuy = get_val(p2, 'view_groupbuy')
-            p2_view_phone = get_val(p2, 'view_phone')
-            p2_consult = get_val(p2, 'consult_users')
-            p2_address = get_val(p2, 'address_clicks')
-            p2_collect = get_val(p2, 'new_collect')
-            p2_good_reviews = get_val(p2, 'new_good_reviews')
-            p2_click_price = calc_avg_price(p2_promo_cost, p2_promo_clicks)
-            p2_promo_rate = f"{calc_rate(p2_promo_orders, p2_promo_clicks)}%"
-            p2_collect_rate = f"{calc_rate(p2_collect, p2_visit)}%"
-            p2_review_rate = f"{calc_rate(p2_good_reviews, p2_verify_users)}%"
+                p2_promo_cost = get_val(p2, 'promotion_cost')
+                p2_promo_exposure = get_val(p2, 'promotion_exposure')
+                p2_promo_clicks = get_val(p2, 'promotion_clicks')
+                p2_promo_orders = get_val(p2, 'promotion_orders')
+                p2_view_groupbuy = get_val(p2, 'view_groupbuy')
+                p2_view_phone = get_val(p2, 'view_phone')
+                p2_consult = get_val(p2, 'consult_users')
+                p2_address = get_val(p2, 'address_clicks')
+                p2_collect = get_val(p2, 'new_collect')
+                p2_good_reviews = get_val(p2, 'new_good_reviews')
+                p2_click_price = calc_avg_price(p2_promo_cost, p2_promo_clicks)
+                p2_promo_rate = f"{calc_rate(p2_promo_orders, p2_promo_clicks)}%"
+                p2_collect_rate = f"{calc_rate(p2_collect, p2_visit)}%"
+                p2_review_rate = f"{calc_rate(p2_good_reviews, p2_verify_users)}%"
 
-            diff_promo_cost = round(p2_promo_cost - p1_promo_cost, 2)
-            diff_promo_exposure = p2_promo_exposure - p1_promo_exposure
-            diff_promo_clicks = p2_promo_clicks - p1_promo_clicks
-            diff_click_price = round(p2_click_price - p1_click_price, 2)
-            diff_promo_orders = p2_promo_orders - p1_promo_orders
-            diff_promo_rate = calc_rate_diff(p1_promo_rate, p2_promo_rate)
-            diff_view_groupbuy = p2_view_groupbuy - p1_view_groupbuy
-            diff_view_phone = p2_view_phone - p1_view_phone
-            diff_consult = p2_consult - p1_consult
-            diff_address = p2_address - p1_address
-            diff_collect = p2_collect - p1_collect
-            diff_collect_rate = calc_rate_diff(p1_collect_rate, p2_collect_rate)
-            diff_good_reviews = p2_good_reviews - p1_good_reviews
-            diff_review_rate = calc_rate_diff(p1_review_rate, p2_review_rate)
+                diff_promo_cost = round(p2_promo_cost - p1_promo_cost, 2)
+                diff_promo_exposure = p2_promo_exposure - p1_promo_exposure
+                diff_promo_clicks = p2_promo_clicks - p1_promo_clicks
+                diff_click_price = round(p2_click_price - p1_click_price, 2)
+                diff_promo_orders = p2_promo_orders - p1_promo_orders
+                diff_promo_rate = calc_rate_diff(p1_promo_rate, p2_promo_rate)
+                diff_view_groupbuy = p2_view_groupbuy - p1_view_groupbuy
+                diff_view_phone = p2_view_phone - p1_view_phone
+                diff_consult = p2_consult - p1_consult
+                diff_address = p2_address - p1_address
+                diff_collect = p2_collect - p1_collect
+                diff_collect_rate = calc_rate_diff(p1_collect_rate, p2_collect_rate)
+                diff_good_reviews = p2_good_reviews - p1_good_reviews
+                diff_review_rate = calc_rate_diff(p1_review_rate, p2_review_rate)
 
-            # 第一行：时期1核销数据
-            row1 = [
-                seq_num, operator, city, sales, shop_name, period1_str,
-                round(p1_verify_discount, 2), p1_exposure, p1_visit, p1_exposure_rate,
-                p1_order_users, p1_order_coupons, p1_order_rate,
-                p1_verify_users, p1_verify_coupons,
-                round(p1_order_amount, 2), round(p1_verify_amount, 2),
-                p1_coupon_orders, p1_phone_clicks, p1_avg_price,
-                round(p1_promo_cost, 2), p1_promo_exposure, p1_promo_clicks, p1_click_price,
-                p1_promo_orders, p1_promo_rate, p1_view_groupbuy, p1_view_phone,
-                p1_consult, p1_address, p1_collect, p1_collect_rate,
-                p1_good_reviews, p1_review_rate
-            ]
-            ws_summary.append(row1)
+                # 第一行：时期1核销数据
+                row1 = [
+                    seq_num, operator, city, sales, shop_name, period1_str,
+                    round(p1_verify_discount, 2), p1_exposure, p1_visit, p1_exposure_rate,
+                    p1_order_users, p1_order_coupons, p1_order_rate,
+                    p1_verify_users, p1_verify_coupons,
+                    round(p1_order_amount, 2), round(p1_verify_amount, 2),
+                    p1_coupon_orders, p1_phone_clicks, p1_avg_price,
+                    round(p1_promo_cost, 2), p1_promo_exposure, p1_promo_clicks, p1_click_price,
+                    p1_promo_orders, p1_promo_rate, p1_view_groupbuy, p1_view_phone,
+                    p1_consult, p1_address, p1_collect, p1_collect_rate,
+                    p1_good_reviews, p1_review_rate
+                ]
+                ws_summary.append(row1)
 
-            # 第二行：时期2数据
-            row2 = [
-                seq_num, operator, city, sales, shop_name, period2_str,
-                round(p2_verify_discount, 2), p2_exposure, p2_visit, p2_exposure_rate,
-                p2_order_users, p2_order_coupons, p2_order_rate,
-                p2_verify_users, p2_verify_coupons,
-                round(p2_order_amount, 2), round(p2_verify_amount, 2),
-                p2_coupon_orders, p2_phone_clicks, p2_avg_price,
-                round(p2_promo_cost, 2), p2_promo_exposure, p2_promo_clicks, p2_click_price,
-                p2_promo_orders, p2_promo_rate, p2_view_groupbuy, p2_view_phone,
-                p2_consult, p2_address, p2_collect, p2_collect_rate,
-                p2_good_reviews, p2_review_rate
-            ]
-            ws_summary.append(row2)
+                # 第二行：时期2数据
+                row2 = [
+                    seq_num, operator, city, sales, shop_name, period2_str,
+                    round(p2_verify_discount, 2), p2_exposure, p2_visit, p2_exposure_rate,
+                    p2_order_users, p2_order_coupons, p2_order_rate,
+                    p2_verify_users, p2_verify_coupons,
+                    round(p2_order_amount, 2), round(p2_verify_amount, 2),
+                    p2_coupon_orders, p2_phone_clicks, p2_avg_price,
+                    round(p2_promo_cost, 2), p2_promo_exposure, p2_promo_clicks, p2_click_price,
+                    p2_promo_orders, p2_promo_rate, p2_view_groupbuy, p2_view_phone,
+                    p2_consult, p2_address, p2_collect, p2_collect_rate,
+                    p2_good_reviews, p2_review_rate
+                ]
+                ws_summary.append(row2)
 
-            # 第三行：差值
-            row3 = [
-                seq_num, operator, city, sales, shop_name, '差值',
-                diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
-                diff_order_users, diff_order_coupons, diff_order_rate,
-                diff_verify_users, diff_verify_coupons,
-                diff_order_amount, diff_verify_amount,
-                diff_coupon_orders, diff_phone_clicks, diff_avg_price,
-                diff_promo_cost, diff_promo_exposure, diff_promo_clicks, diff_click_price,
-                diff_promo_orders, diff_promo_rate, diff_view_groupbuy, diff_view_phone,
-                diff_consult, diff_address, diff_collect, diff_collect_rate,
-                diff_good_reviews, diff_review_rate
-            ]
-            ws_summary.append(row3)
+                # 第三行：差值
+                row3 = [
+                    seq_num, operator, city, sales, shop_name, '差值',
+                    diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
+                    diff_order_users, diff_order_coupons, diff_order_rate,
+                    diff_verify_users, diff_verify_coupons,
+                    diff_order_amount, diff_verify_amount,
+                    diff_coupon_orders, diff_phone_clicks, diff_avg_price,
+                    diff_promo_cost, diff_promo_exposure, diff_promo_clicks, diff_click_price,
+                    diff_promo_orders, diff_promo_rate, diff_view_groupbuy, diff_view_phone,
+                    diff_consult, diff_address, diff_collect, diff_collect_rate,
+                    diff_good_reviews, diff_review_rate
+                ]
+                ws_summary.append(row3)
 
-            # 第四行：表头（重复）
-            header = [
-                '序号', '运营', '城市', '销售', '门店', '数据周期',
-                '优惠后核销额', '曝光人数', '访问人数', '曝光访问转化率',
-                '下单人数', '下单券数', '下单转化率', '核销人数', '核销券数',
-                '下单售价金额', '核销售价金额', '优惠码订单', '电话点击', '客单价',
-                '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
-                '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
-                '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
-            ]
-            ws_summary.append(header)
+                # 第四行：表头（重复）
+                header = [
+                    '序号', '运营', '城市', '销售', '门店', '数据周期',
+                    '优惠后核销额', '曝光人数', '访问人数', '曝光访问转化率',
+                    '下单人数', '下单券数', '下单转化率', '核销人数', '核销券数',
+                    '下单售价金额', '核销售价金额', '优惠码订单', '电话点击', '客单价',
+                    '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
+                    '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
+                    '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
+                ]
+                ws_summary.append(header)
 
-            # ==================== 门店详细Sheet（竖向31行）====================
-            sheet_name = clean_sheet_name(shop_name)
-            if sheet_name in sheet_names_used:
-                sheet_names_used[sheet_name] += 1
-                sheet_name = f"{sheet_name[:28]}_{sheet_names_used[sheet_name]}"
-            else:
-                sheet_names_used[sheet_name] = 1
+                # ==================== 门店详细Sheet（竖向31行）====================
+                sheet_name = clean_sheet_name(shop_name)
+                if sheet_name in sheet_names_used:
+                    sheet_names_used[sheet_name] += 1
+                    sheet_name = f"{sheet_name[:28]}_{sheet_names_used[sheet_name]}"
+                else:
+                    sheet_names_used[sheet_name] = 1
 
-            ws_detail = wb.create_sheet(title=sheet_name)
+                ws_detail = wb.create_sheet(title=sheet_name)
 
-            # 额外指标
-            p1_checkin = get_val(p1, 'checkin_count')
-            p2_checkin = get_val(p2, 'checkin_count')
+                # 额外指标
+                p1_checkin = get_val(p1, 'checkin_count')
+                p2_checkin = get_val(p2, 'checkin_count')
 
-            # 构建竖向表格（31行）
-            detail_data = [
-                [shop_name, '', '', ''],
-                ['指标项/时间周期', period1_str, period2_str, '差值（红涨/黑跌）'],
-                ['曝光人数：', p1_exposure, p2_exposure, f'=C3-B3'],
-                ['访问人数：', p1_visit, p2_visit, f'=C4-B4'],
-                ['曝光访问转化率：', f'=B4/B3', f'=C4/C3', f'=C5-B5'],
-                ['下单人数：', p1_order_users, p2_order_users, f'=C6-B6'],
-                ['核销人数：', p1_verify_users, p2_verify_users, f'=C7-B7'],
-                ['意向转化率：', f'=B6/B4', f'=C6/C4', f'=C8-B8'],
-                ['下单券数：', p1_order_coupons, p2_order_coupons, f'=C9-B9'],
-                ['核销券数：', p1_verify_coupons, p2_verify_coupons, f'=C10-B10'],
-                ['下单售价金额：', round(p1_order_amount, 2), round(p2_order_amount, 2), f'=C11-B11'],
-                ['核销售价金额：', round(p1_verify_amount, 2), round(p2_verify_amount, 2), f'=C12-B12'],
-                ['优惠后核销金额：', round(p1_verify_discount, 2), round(p2_verify_discount, 2), f'=C13-B13'],
-                ['客单价：', p1_avg_price, p2_avg_price, f'=C14-B14'],
-                ['电话点击：', p1_phone_clicks, p2_phone_clicks, f'=C15-B15'],
-                ['地址点击：', p1_address, p2_address, f'=C16-B16'],
-                ['在线咨询：', p1_consult, p2_consult, f'=C17-B17'],
-                ['门店干预数据', '', '', ''],
-                ['新增好评：', p1_good_reviews, p2_good_reviews, f'=C19-B19'],
-                ['留评率：', f'=B19/B7', f'=C19/C7', f'=C20-B20'],
-                ['门店收藏：', p1_collect, p2_collect, f'=C21-B21'],
-                ['收藏率：', f'=B21/B6', f'=C21/C6', f'=C22-B22'],
-                ['打卡人数：', p1_checkin, p2_checkin, f'=C23-B23'],
-                ['推广通数据', '', '', ''],
-                ['推广通订单量', p1_promo_orders, p2_promo_orders, f'=C25-B25'],
-                ['推广通花费', round(p1_promo_cost, 2), round(p2_promo_cost, 2), f'=C26-B26'],
-                ['推广通曝光（次）', p1_promo_exposure, p2_promo_exposure, f'=C27-B27'],
-                ['推广通点击（次）', p1_promo_clicks, p2_promo_clicks, f'=C28-B28'],
-                ['推广通点击均价（元）', p1_click_price, p2_click_price, f'=C29-B29'],
-                ['查看团购（次）', p1_view_groupbuy, p2_view_groupbuy, f'=C30-B30'],
-                ['查看电话（次）', p1_view_phone, p2_view_phone, f'=C31-B31'],
-            ]
+                # 构建竖向表格（31行）
+                detail_data = [
+                    [shop_name, '', '', ''],
+                    ['指标项/时间周期', period1_str, period2_str, '差值（红涨/黑跌）'],
+                    ['曝光人数：', p1_exposure, p2_exposure, f'=C3-B3'],
+                    ['访问人数：', p1_visit, p2_visit, f'=C4-B4'],
+                    ['曝光访问转化率：', f'=B4/B3', f'=C4/C3', f'=C5-B5'],
+                    ['下单人数：', p1_order_users, p2_order_users, f'=C6-B6'],
+                    ['核销人数：', p1_verify_users, p2_verify_users, f'=C7-B7'],
+                    ['意向转化率：', f'=B6/B4', f'=C6/C4', f'=C8-B8'],
+                    ['下单券数：', p1_order_coupons, p2_order_coupons, f'=C9-B9'],
+                    ['核销券数：', p1_verify_coupons, p2_verify_coupons, f'=C10-B10'],
+                    ['下单售价金额：', round(p1_order_amount, 2), round(p2_order_amount, 2), f'=C11-B11'],
+                    ['核销售价金额：', round(p1_verify_amount, 2), round(p2_verify_amount, 2), f'=C12-B12'],
+                    ['优惠后核销金额：', round(p1_verify_discount, 2), round(p2_verify_discount, 2), f'=C13-B13'],
+                    ['客单价：', p1_avg_price, p2_avg_price, f'=C14-B14'],
+                    ['电话点击：', p1_phone_clicks, p2_phone_clicks, f'=C15-B15'],
+                    ['地址点击：', p1_address, p2_address, f'=C16-B16'],
+                    ['在线咨询：', p1_consult, p2_consult, f'=C17-B17'],
+                    ['门店干预数据', '', '', ''],
+                    ['新增好评：', p1_good_reviews, p2_good_reviews, f'=C19-B19'],
+                    ['留评率：', f'=B19/B7', f'=C19/C7', f'=C20-B20'],
+                    ['门店收藏：', p1_collect, p2_collect, f'=C21-B21'],
+                    ['收藏率：', f'=B21/B6', f'=C21/C6', f'=C22-B22'],
+                    ['打卡人数：', p1_checkin, p2_checkin, f'=C23-B23'],
+                    ['推广通数据', '', '', ''],
+                    ['推广通订单量', p1_promo_orders, p2_promo_orders, f'=C25-B25'],
+                    ['推广通花费', round(p1_promo_cost, 2), round(p2_promo_cost, 2), f'=C26-B26'],
+                    ['推广通曝光（次）', p1_promo_exposure, p2_promo_exposure, f'=C27-B27'],
+                    ['推广通点击（次）', p1_promo_clicks, p2_promo_clicks, f'=C28-B28'],
+                    ['推广通点击均价（元）', p1_click_price, p2_click_price, f'=C29-B29'],
+                    ['查看团购（次）', p1_view_groupbuy, p2_view_groupbuy, f'=C30-B30'],
+                    ['查看电话（次）', p1_view_phone, p2_view_phone, f'=C31-B31'],
+                ]
 
-            for row_data in detail_data:
-                ws_detail.append(row_data)
+                for row_data in detail_data:
+                    ws_detail.append(row_data)
 
-            # 设置详细Sheet样式
-            ws_detail.column_dimensions['A'].width = 22
-            ws_detail.column_dimensions['B'].width = 18
-            ws_detail.column_dimensions['C'].width = 18
-            ws_detail.column_dimensions['D'].width = 20
+                # 设置详细Sheet样式
+                ws_detail.column_dimensions['A'].width = 22
+                ws_detail.column_dimensions['B'].width = 18
+                ws_detail.column_dimensions['C'].width = 18
+                ws_detail.column_dimensions['D'].width = 20
 
-            # 标题样式
-            ws_detail['A1'].font = Font(bold=True, size=12)
-            ws_detail['A2'].font = Font(bold=True, size=10)
+                # 标题样式
+                ws_detail['A1'].font = Font(bold=True, size=12)
+                ws_detail['A2'].font = Font(bold=True, size=10)
 
-            # 分类标题
-            for r in [18, 24]:
-                ws_detail.cell(row=r, column=1).font = Font(bold=True, size=10, color="0066CC")
+                # 分类标题
+                for r in [18, 24]:
+                    ws_detail.cell(row=r, column=1).font = Font(bold=True, size=10, color="0066CC")
 
-            # 应用边框
-            apply_border(ws_detail, 1, len(detail_data), 1, 4)
+                # 应用边框
+                apply_border(ws_detail, 1, len(detail_data), 1, 4)
 
-            seq_num += 1
+                seq_num += 1
+
+            except Exception as e:
+                # 捕获错误并打印详细调试信息
+                print(f"\n{'❌' * 30}")
+                print(f"❌ 处理门店时出错: {shop_name} (ID: {shop_id})")
+                print(f"❌ 错误类型: {type(e).__name__}")
+                print(f"❌ 错误信息: {str(e)}")
+                print(f"{'❌' * 30}")
+
+                # 打印时期1数据
+                debug_print_row(shop_id, shop_name, p1, "时期1数据 (period1_data)")
+
+                # 打印时期2数据
+                debug_print_row(shop_id, shop_name, p2, "时期2数据 (period2_data)")
+
+                # 打印完整的堆栈跟踪
+                print("\n📋 完整错误堆栈:")
+                traceback.print_exc()
+
+                # 记录出错的门店
+                error_shops.append({
+                    'shop_id': shop_id,
+                    'shop_name': shop_name,
+                    'error': str(e),
+                    'p1_data': p1,
+                    'p2_data': p2
+                })
+
+                seq_num += 1
+                continue
 
         # 汇总表样式
         for i in range(1, 35):
@@ -1489,6 +1629,15 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
             output_filename = f"自定义 {shop_count}家门店非餐 {period2_start.replace('-', '')}~{period2_end.replace('-', '')} {datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
 
         wb.save(output_filename)
+
+        # 打印汇总信息
+        if error_shops:
+            print(f"\n{'=' * 60}")
+            print(f"⚠️ 警告: 有 {len(error_shops)} 个门店处理失败:")
+            for err in error_shops:
+                print(f"  - {err['shop_name']} (ID: {err['shop_id']}): {err['error']}")
+            print(f"{'=' * 60}")
+
         print(f"✅ 自定义报表生成成功: {output_filename}")
         return output_filename
 
@@ -1500,27 +1649,32 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
 # ==================== 主程序示例 ====================
 if __name__ == "__main__":
     print("=" * 60)
-    print("江鑫数据报表生成系统")
+    print("江鑫数据报表生成系统（调试版）")
     print("=" * 60)
 
     # 示例：生成日报
     print("\n【示例1】生成日报")
     try:
-        generate_daily_report('2025-12-12')
+        generate_daily_report(
+            report_date='2025-12-14',
+            accounts=["13718175572a", "19318574226a"]
+        )
     except Exception as e:
         print(f"❌ 日报生成失败: {e}")
+        traceback.print_exc()
 
     # 示例：生成周报
     print("\n【示例2】生成周报")
     try:
         generate_weekly_report(
-            week1_start='2025-11-10',
-            week1_end='2025-11-16',
-            week2_start='2025-11-17',
-            week2_end='2025-11-23'
+            week1_start='2025-12-01',
+            week1_end='2025-12-07',
+            week2_start='2025-12-08',
+            week2_end='2025-12-14'
         )
     except Exception as e:
         print(f"❌ 周报生成失败: {e}")
+        traceback.print_exc()
 
     # 示例：生成月报
     print("\n【示例3】生成月报")
@@ -1533,6 +1687,7 @@ if __name__ == "__main__":
         )
     except Exception as e:
         print(f"❌ 月报生成失败: {e}")
+        traceback.print_exc()
 
     # 示例：生成自定义报表
     print("\n【示例4】生成自定义报表")
@@ -1546,6 +1701,7 @@ if __name__ == "__main__":
         )
     except Exception as e:
         print(f"❌ 自定义报表生成失败: {e}")
+        traceback.print_exc()
 
     print("\n" + "=" * 60)
     print("所有报表生成完成！")
