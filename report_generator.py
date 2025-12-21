@@ -675,10 +675,15 @@ def generate_daily_report(report_date, accounts=None, output_filename=None):
             for row_data in detail_data:
                 ws_detail.append(row_data)
 
-            # 设置详细Sheet样式
-            ws_detail.column_dimensions['A'].width = 25
+            # 设置详细Sheet样式（A列宽改为40）
+            ws_detail.column_dimensions['A'].width = 40
             ws_detail.column_dimensions['B'].width = 30
             ws_detail.column_dimensions['C'].width = 15
+
+            # 所有单元格居中对齐
+            for row_num in range(1, len(detail_data) + 1):
+                for col_num in range(1, 4):
+                    ws_detail.cell(row=row_num, column=col_num).alignment = Alignment(horizontal='center', vertical='center')
 
             # 标题行样式
             ws_detail['A1'].font = Font(bold=True, size=12)
@@ -701,10 +706,15 @@ def generate_daily_report(report_date, accounts=None, output_filename=None):
             # 应用边框
             apply_border(ws_detail, 1, len(detail_data), 1, 3)
 
-        # 设置汇总表列宽
-        summary_widths = [6, 8, 5, 12, 8, 8, 35, 10, 10, 10, 10, 10, 10, 10, 10, 12, 8, 12, 12, 12, 12, 14, 14]
+        # 设置汇总表列宽（G列门店改为46）
+        summary_widths = [6, 8, 5, 12, 8, 8, 46, 10, 10, 10, 10, 10, 10, 10, 10, 12, 8, 12, 12, 12, 12, 14, 14]
         for col_idx, width in enumerate(summary_widths, start=1):
             ws_summary.column_dimensions[get_column_letter(col_idx)].width = width
+
+        # 汇总表所有数据居中对齐
+        for row in ws_summary.iter_rows(min_row=1, max_row=len(rows) + 1, min_col=1, max_col=len(summary_headers)):
+            for cell in row:
+                cell.alignment = Alignment(horizontal='center', vertical='center')
 
         # 应用汇总表边框
         apply_border(ws_summary, 1, len(rows) + 1, 1, len(summary_headers))
@@ -961,9 +971,9 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 diff_review_rate = calc_rate_diff(w1_review_rate, w2_review_rate)
 
                 # ==================== 汇总Sheet 8行结构（与示例一致）====================
-                # 行1: 核销数据表头（新增4列：序号、运营、城市、销售）
+                # 行1: 核销数据表头（周报/月报不包含序号、运营、城市、销售）
                 header_row1 = [
-                    '序号', '运营', '城市', '销售', '门店', '数据周期', '优惠后核销额', '曝光人数', '访问人数', '曝光访问转化率',
+                    '门店', '数据周期', '优惠后核销额', '曝光人数', '访问人数', '曝光访问转化率',
                     '下单人数', '下单券数', '下单转化率', '核销人数', '核销券数',
                     '下单售价金额', '核销售价金额', '优惠码订单', '电话点击', '客单价'
                 ]
@@ -971,7 +981,7 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
 
                 # 行2: 第一周核销数据（带门店信息）
                 row2 = [
-                    shop_seq, operator, city, sales, shop_name, week1_period,
+                    shop_name, week1_period,
                     round(w1_verify_discount, 2), w1_exposure, w1_visit, w1_exposure_rate,
                     w1_order_users, w1_order_coupons, w1_order_rate,
                     w1_verify_users, w1_verify_coupons,
@@ -980,9 +990,9 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 ]
                 ws_summary.append(row2)
 
-                # 行3: 第二周核销数据（前5列为空）
+                # 行3: 第二周核销数据（前1列为空）
                 row3 = [
-                    '', '', '', '', '', week2_period,
+                    '', week2_period,
                     round(w2_verify_discount, 2), w2_exposure, w2_visit, w2_exposure_rate,
                     w2_order_users, w2_order_coupons, w2_order_rate,
                     w2_verify_users, w2_verify_coupons,
@@ -991,9 +1001,9 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 ]
                 ws_summary.append(row3)
 
-                # 行4: 核销差值（前5列为空）
+                # 行4: 核销差值（前1列为空）
                 row4 = [
-                    '', '', '', '', '', '差值',
+                    '', '差值',
                     diff_verify_discount, diff_exposure, diff_visit, diff_exposure_rate,
                     diff_order_users, diff_order_coupons, diff_order_rate,
                     diff_verify_users, diff_verify_coupons,
@@ -1002,17 +1012,17 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 ]
                 ws_summary.append(row4)
 
-                # 行5: 推广通表头（前5列为空）
+                # 行5: 推广通表头（前1列为空）
                 header_row2 = [
-                    '', '', '', '', '', '数据周期', '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
+                    '', '数据周期', '推广通花费', '推广通曝光', '推广通点击', '推广通点击均价',
                     '推广通订单量', '推广通下单转化率', '推广通查看团购', '推广通查看电话',
                     '在线咨询', '地址点击', '门店收藏', '收藏率', '新增好评数', '留评率'
                 ]
                 ws_summary.append(header_row2)
 
-                # 行6: 第一周推广通数据（前5列为空）
+                # 行6: 第一周推广通数据（前1列为空）
                 row6 = [
-                    '', '', '', '', '', week1_period,
+                    '', week1_period,
                     round(w1_promo_cost, 2), w1_promo_exposure, w1_promo_clicks, w1_click_price,
                     w1_promo_orders, w1_promo_rate, w1_view_groupbuy, w1_view_phone,
                     w1_consult, w1_address, w1_collect, w1_collect_rate,
@@ -1020,9 +1030,9 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 ]
                 ws_summary.append(row6)
 
-                # 行7: 第二周推广通数据（前5列为空）
+                # 行7: 第二周推广通数据（前1列为空）
                 row7 = [
-                    '', '', '', '', '', week2_period,
+                    '', week2_period,
                     round(w2_promo_cost, 2), w2_promo_exposure, w2_promo_clicks, w2_click_price,
                     w2_promo_orders, w2_promo_rate, w2_view_groupbuy, w2_view_phone,
                     w2_consult, w2_address, w2_collect, w2_collect_rate,
@@ -1030,9 +1040,9 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 ]
                 ws_summary.append(row7)
 
-                # 行8: 推广通差值（前5列为空）
+                # 行8: 推广通差值（前1列为空）
                 row8 = [
-                    '', '', '', '', '', '差值',
+                    '', '差值',
                     diff_promo_cost, diff_promo_exposure, diff_promo_clicks, diff_click_price,
                     diff_promo_orders, diff_promo_rate, diff_view_groupbuy, diff_view_phone,
                     diff_consult, diff_address, diff_collect, diff_collect_rate,
@@ -1137,11 +1147,11 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 ws_detail.merge_cells('A18:D18')
                 ws_detail.merge_cells('A24:D24')
 
-                # 设置详细Sheet样式 - 列宽全部为25
+                # 设置详细Sheet样式 - 列宽: A=25, B=36, C=36, D=20
                 ws_detail.column_dimensions['A'].width = 25
-                ws_detail.column_dimensions['B'].width = 25
-                ws_detail.column_dimensions['C'].width = 25
-                ws_detail.column_dimensions['D'].width = 25
+                ws_detail.column_dimensions['B'].width = 36
+                ws_detail.column_dimensions['C'].width = 36
+                ws_detail.column_dimensions['D'].width = 20
 
                 # 设置行高：第1行=31，第2行到最后=20
                 ws_detail.row_dimensions[1].height = 31
@@ -1241,15 +1251,11 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 # 继续处理下一个门店
                 continue
 
-        # 汇总表样式
-        # 设置列宽：A列(序号)=8，B列(运营)=18，C列(城市)=10，D列(销售)=10，E列(门店)=78，F列(数据周期)=26，其他列=15
-        ws_summary.column_dimensions['A'].width = 8
-        ws_summary.column_dimensions['B'].width = 18
-        ws_summary.column_dimensions['C'].width = 10
-        ws_summary.column_dimensions['D'].width = 10
-        ws_summary.column_dimensions['E'].width = 78
-        ws_summary.column_dimensions['F'].width = 26
-        for i in range(7, 21):
+        # 汇总表样式（周报/月报不含序号、运营、城市、销售四列）
+        # 设置列宽：A列(门店)=78，B列(数据周期)=26，其他列=15
+        ws_summary.column_dimensions['A'].width = 78
+        ws_summary.column_dimensions['B'].width = 26
+        for i in range(3, 17):
             ws_summary.column_dimensions[get_column_letter(i)].width = 15
 
         thin_border = Border(
@@ -1264,40 +1270,39 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
         # 红色字体
         red_font = Font(color="FF0000")
 
-        for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=20):
+        for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=16):
             for cell in row:
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-                # 表头行（第1列为"序号"）- 浅绿色背景加粗
-                if cell.column == 1 and cell.value == '序号':
+                # 表头行（第1列为"门店"）- 浅绿色背景加粗
+                if cell.column == 1 and cell.value == '门店':
                     for c in row:
                         c.font = Font(bold=True, size=10)
                         c.fill = green_fill
-                elif cell.column == 6 and cell.value == '数据周期' and ws_summary.cell(row[0].row, 1).value == '':
+                elif cell.column == 2 and cell.value == '数据周期' and ws_summary.cell(row[0].row, 1).value == '':
                     for c in row:
                         c.font = Font(bold=True, size=10)
                         c.fill = green_fill
 
                 # 差值行 - "差值"文字红色，数值红色，不设灰色背景
-                if cell.column == 6 and cell.value == '差值':
+                if cell.column == 2 and cell.value == '差值':
                     for c in row:
                         # 差值行所有数值都设为红色
-                        if c.column == 6:  # "差值"文字本身也红色
+                        if c.column == 2:  # "差值"文字本身也红色
                             c.font = red_font
-                        elif c.column > 6:  # 数值列红色
+                        elif c.column > 2:  # 数值列红色
                             c.font = red_font
 
-        # 合并A-E列单元格：每个门店8行，合并第2-8行（门店名行到差值行）
-        # 规则：第1行是表头，第2行是门店名，第3-8行A-E列为空需要合并
+        # 合并A列单元格：每个门店8行，合并第2-8行（门店名行到差值行）
+        # 规则：第1行是表头，第2行是门店名，第3-8行A列为空需要合并
         # 即合并 2-8, 10-16, 18-24, 26-32 ...
         row_idx = 2  # 从第2行开始（第一个门店名行）
         while row_idx <= ws_summary.max_row:
             merge_end = row_idx + 6  # 合并7行 (row_idx 到 row_idx+6)
             if merge_end <= ws_summary.max_row:
-                # 合并A-E列（序号、运营、城市、销售、门店）
-                for col in range(1, 6):  # 列1-5
-                    ws_summary.merge_cells(start_row=row_idx, start_column=col, end_row=merge_end, end_column=col)
+                # 只合并A列（门店）
+                ws_summary.merge_cells(start_row=row_idx, start_column=1, end_row=merge_end, end_column=1)
             row_idx += 8  # 跳到下一个门店块
 
         # 保存文件
@@ -1751,11 +1756,11 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
                 ws_detail.merge_cells('A18:D18')
                 ws_detail.merge_cells('A24:D24')
 
-                # 设置详细Sheet样式 - 列宽全部为25
+                # 设置详细Sheet样式 - 列宽: A=25, B=36, C=36, D=20
                 ws_detail.column_dimensions['A'].width = 25
-                ws_detail.column_dimensions['B'].width = 25
-                ws_detail.column_dimensions['C'].width = 25
-                ws_detail.column_dimensions['D'].width = 25
+                ws_detail.column_dimensions['B'].width = 36
+                ws_detail.column_dimensions['C'].width = 36
+                ws_detail.column_dimensions['D'].width = 20
 
                 # 设置行高：第1行=31，第2行到最后=20
                 ws_detail.row_dimensions[1].height = 31
