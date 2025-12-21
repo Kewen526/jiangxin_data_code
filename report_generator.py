@@ -1031,13 +1031,6 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 ]
                 ws_summary.append(row8)
 
-                # 合并A列单元格（门店名所在的7行）- 与示例一致
-                # 当前行是第8行数据，门店名在第2行（从表头算起）
-                current_row = ws_summary.max_row
-                # 门店名在 current_row - 6 行（即数据的第2行）
-                shop_name_row = current_row - 6
-                ws_summary.merge_cells(f'A{shop_name_row}:A{current_row}')
-
                 # ==================== 门店详细Sheet（竖向31行）====================
                 sheet_name = clean_sheet_name(shop_name)
                 if sheet_name in sheet_names_used:
@@ -1217,32 +1210,46 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
             bottom=Side(style='thin')
         )
 
-        # 浅绿色背景（与示例一致 - CCFFCC）
-        green_fill = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
-        # 红色字体（差值行）
+        # 绿色背景（与示例一致）
+        green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+        # 浅灰色背景（差值行）
+        gray_fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
+        # 红色字体（正数差值）
         red_font = Font(color="FF0000")
-        # 标题字体：宋体 + 加粗
-        header_font = Font(name='宋体', bold=True, size=10)
 
         for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=16):
             for cell in row:
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-                # 表头行（第1列为"门店"或第2列为"数据周期"且第1列为空）- 浅绿色背景 + 宋体加粗
+                # 表头行（第1列为"门店"或第2列为"数据周期"且第1列为空）- 绿色背景加粗
                 if cell.column == 1 and cell.value == '门店':
                     for c in row:
-                        c.font = header_font
+                        c.font = Font(bold=True, size=10)
                         c.fill = green_fill
                 elif cell.column == 2 and cell.value == '数据周期' and ws_summary.cell(row[0].row, 1).value == '':
                     for c in row:
-                        c.font = header_font
+                        c.font = Font(bold=True, size=10)
                         c.fill = green_fill
 
-                # 差值行 - 整行红色字体（与示例一致）
+                # 差值行 - 检查负数并设置红色字体
                 if cell.column == 2 and cell.value == '差值':
                     for c in row:
-                        c.font = red_font
+                        c.fill = gray_fill
+                        # 检查每个单元格的值是否为负数
+                        if c.column > 2:  # 跳过门店和数据周期列
+                            val = c.value
+                            is_negative = False
+                            if isinstance(val, (int, float)):
+                                is_negative = val < 0
+                            elif isinstance(val, str):
+                                try:
+                                    num_val = float(val.replace('%', ''))
+                                    is_negative = num_val < 0
+                                except:
+                                    pass
+                            if is_negative:
+                                c.font = red_font
 
         # 保存文件
         if not output_filename:
@@ -1598,13 +1605,6 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
                 ]
                 ws_summary.append(row8)
 
-                # 合并A列单元格（门店名所在的7行）- 与示例一致
-                # 当前行是第8行数据，门店名在第2行（从表头算起）
-                current_row = ws_summary.max_row
-                # 门店名在 current_row - 6 行（即数据的第2行）
-                shop_name_row = current_row - 6
-                ws_summary.merge_cells(f'A{shop_name_row}:A{current_row}')
-
                 # ==================== 门店详细Sheet（竖向31行）====================
                 sheet_name = clean_sheet_name(shop_name)
                 if sheet_name in sheet_names_used:
@@ -1784,32 +1784,46 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
             bottom=Side(style='thin')
         )
 
-        # 浅绿色背景（与示例一致 - CCFFCC）
-        green_fill = PatternFill(start_color="CCFFCC", end_color="CCFFCC", fill_type="solid")
-        # 红色字体（差值行）
+        # 绿色背景（与示例一致）
+        green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
+        # 浅灰色背景（差值行）
+        gray_fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
+        # 红色字体（负数差值）
         red_font = Font(color="FF0000")
-        # 标题字体：宋体 + 加粗
-        header_font = Font(name='宋体', bold=True, size=10)
 
         for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=16):
             for cell in row:
                 cell.border = thin_border
                 cell.alignment = Alignment(horizontal='center', vertical='center')
 
-                # 表头行（第1列为"门店"或第2列为"数据周期"且第1列为空）- 浅绿色背景 + 宋体加粗
+                # 表头行（第1列为"门店"或第2列为"数据周期"且第1列为空）- 绿色背景加粗
                 if cell.column == 1 and cell.value == '门店':
                     for c in row:
-                        c.font = header_font
+                        c.font = Font(bold=True, size=10)
                         c.fill = green_fill
                 elif cell.column == 2 and cell.value == '数据周期' and ws_summary.cell(row[0].row, 1).value == '':
                     for c in row:
-                        c.font = header_font
+                        c.font = Font(bold=True, size=10)
                         c.fill = green_fill
 
-                # 差值行 - 整行红色字体（与示例一致）
+                # 差值行 - 检查负数并设置红色字体
                 if cell.column == 2 and cell.value == '差值':
                     for c in row:
-                        c.font = red_font
+                        c.fill = gray_fill
+                        # 检查每个单元格的值是否为负数
+                        if c.column > 2:  # 跳过门店和数据周期列
+                            val = c.value
+                            is_negative = False
+                            if isinstance(val, (int, float)):
+                                is_negative = val < 0
+                            elif isinstance(val, str):
+                                try:
+                                    num_val = float(val.replace('%', ''))
+                                    is_negative = num_val < 0
+                                except:
+                                    pass
+                            if is_negative:
+                                c.font = red_font
 
         # 保存文件
         if not output_filename:
@@ -1844,8 +1858,8 @@ if __name__ == "__main__":
     print("\n【示例1】生成日报")
     try:
         generate_daily_report(
-            report_date='2025-12-14',
-            accounts=["13718175572a", "19318574226a"]
+            report_date='2025-12-18',
+            accounts=["13718175572a", "19318574226a","13720016243a"]
         )
     except Exception as e:
         print(f"❌ 日报生成失败: {e}")
@@ -1868,10 +1882,10 @@ if __name__ == "__main__":
     print("\n【示例3】生成月报")
     try:
         generate_monthly_report(
-            month1_start='2025-09-01',
-            month1_end='2025-09-30',
-            month2_start='2025-10-01',
-            month2_end='2025-10-31'
+            month1_start='2025-12-01',
+            month1_end='2025-12-07',
+            month2_start='2025-12-08',
+            month2_end='2025-12-14'
         )
     except Exception as e:
         print(f"❌ 月报生成失败: {e}")
@@ -1881,10 +1895,10 @@ if __name__ == "__main__":
     print("\n【示例4】生成自定义报表")
     try:
         generate_custom_report(
-            period1_start='2025-10-25',
-            period1_end='2025-11-09',
-            period2_start='2025-11-10',
-            period2_end='2025-11-25',
+            period1_start='2025-12-01',
+            period1_end='2025-12-07',
+            period2_start='2025-12-08',
+            period2_end='2025-12-14',
             shop_ids=None  # None表示所有门店，也可以传入 [shop_id1, shop_id2, ...]
         )
     except Exception as e:
