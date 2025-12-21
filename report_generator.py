@@ -1124,32 +1124,61 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 # 合并门店名单元格 A1:D1
                 ws_detail.merge_cells('A1:D1')
 
-                # 设置详细Sheet样式
-                ws_detail.column_dimensions['A'].width = 22
-                ws_detail.column_dimensions['B'].width = 20
-                ws_detail.column_dimensions['C'].width = 20
+                # 合并第18行和第24行的A:D单元格
+                ws_detail.merge_cells('A18:D18')
+                ws_detail.merge_cells('A24:D24')
+
+                # 设置详细Sheet样式 - 列宽全部为25
+                ws_detail.column_dimensions['A'].width = 25
+                ws_detail.column_dimensions['B'].width = 25
+                ws_detail.column_dimensions['C'].width = 25
                 ws_detail.column_dimensions['D'].width = 25
 
-                # 标题样式 - 门店名居中加粗
-                ws_detail['A1'].font = Font(bold=True, size=12)
+                # 设置行高：第1行=31，第2行到最后=20
+                ws_detail.row_dimensions[1].height = 31
+                for row_num in range(2, len(detail_data) + 1):
+                    ws_detail.row_dimensions[row_num].height = 20
+
+                # 定义颜色
+                header_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")  # RGB(189,215,238)
+                a_col_fill = PatternFill(start_color="DEEBF7", end_color="DEEBF7", fill_type="solid")  # RGB(222,235,247)
+
+                # 定义字体 - 宋体（SimSun）
+                title_font = Font(name='宋体', size=16, color="000000")
+                bcd_font = Font(name='宋体', size=14, color="000000")
+
+                # 标题样式 - 门店名居中加粗，宋体16号
+                ws_detail['A1'].font = Font(name='宋体', bold=True, size=16, color="000000")
                 ws_detail['A1'].alignment = Alignment(horizontal='center', vertical='center')
 
-                # 表头行样式
+                # 第2行（标题行）样式 - 背景色#BDD7EE，宋体16号黑色
                 for col in range(1, 5):
                     cell = ws_detail.cell(row=2, column=col)
-                    cell.font = Font(bold=True, size=10)
+                    cell.font = Font(name='宋体', bold=True, size=16, color="000000")
+                    cell.fill = header_fill
                     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-                # 分类标题（蓝色）
+                # 第18行和第24行样式 - 背景色#BDD7EE，宋体16号黑色
                 for r in [18, 24]:
-                    ws_detail.cell(row=r, column=1).font = Font(bold=True, size=10, color="0066CC")
+                    cell = ws_detail.cell(row=r, column=1)
+                    cell.font = Font(name='宋体', bold=True, size=16, color="000000")
+                    cell.fill = header_fill
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+
+                # A列其他行背景色 #DEEBF7，B/C/D列字体宋体14号
+                for row_num in range(3, len(detail_data) + 1):
+                    if row_num not in [18, 24]:  # 跳过已处理的分类标题行
+                        # A列背景色
+                        ws_detail.cell(row=row_num, column=1).fill = a_col_fill
+                        ws_detail.cell(row=row_num, column=1).font = Font(name='宋体', size=14, color="000000")
+                        # B/C/D列字体
+                        for col in range(2, 5):
+                            ws_detail.cell(row=row_num, column=col).font = bcd_font
 
                 # 应用边框
                 apply_border(ws_detail, 1, len(detail_data), 1, 4)
 
-                # 设置差值列颜色（正数红色，负数黑色）
-                red_font = Font(color="FF0000")
-                black_font = Font(color="000000")
+                # 设置差值列颜色（正数红色，负数黑色）- 保持宋体14号
                 for row_num in range(3, len(detail_data) + 1):
                     if row_num in [18, 24]:  # 跳过分类标题行
                         continue
@@ -1166,7 +1195,7 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                         except:
                             pass
                     if is_positive:
-                        cell.font = red_font
+                        cell.font = Font(name='宋体', size=14, color="FF0000")
 
             except Exception as e:
                 # 捕获错误并打印详细调试信息
@@ -1199,9 +1228,11 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                 continue
 
         # 汇总表样式
-        for i in range(1, 17):
+        # 设置列宽：A列=78，B列=26，其他列=15
+        ws_summary.column_dimensions['A'].width = 78
+        ws_summary.column_dimensions['B'].width = 26
+        for i in range(3, 17):
             ws_summary.column_dimensions[get_column_letter(i)].width = 15
-        ws_summary.column_dimensions['A'].width = 40
 
         thin_border = Border(
             left=Side(style='thin'),
@@ -1214,7 +1245,7 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
         green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
         # 浅灰色背景（差值行）
         gray_fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
-        # 红色字体（正数差值）
+        # 红色字体（差值行所有值）
         red_font = Font(color="FF0000")
 
         for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=16):
@@ -1232,24 +1263,46 @@ def generate_weekly_report(week1_start, week1_end, week2_start, week2_end, outpu
                         c.font = Font(bold=True, size=10)
                         c.fill = green_fill
 
-                # 差值行 - 检查负数并设置红色字体
+                # 差值行 - 所有数值设为红色字体
                 if cell.column == 2 and cell.value == '差值':
                     for c in row:
                         c.fill = gray_fill
-                        # 检查每个单元格的值是否为负数
+                        # 差值行所有数值都设为红色
                         if c.column > 2:  # 跳过门店和数据周期列
-                            val = c.value
-                            is_negative = False
-                            if isinstance(val, (int, float)):
-                                is_negative = val < 0
-                            elif isinstance(val, str):
-                                try:
-                                    num_val = float(val.replace('%', ''))
-                                    is_negative = num_val < 0
-                                except:
-                                    pass
-                            if is_negative:
-                                c.font = red_font
+                            c.font = red_font
+
+        # 合并A列相邻的"门店"单元格
+        merge_start = None
+        for row_idx in range(1, ws_summary.max_row + 1):
+            cell_value = ws_summary.cell(row=row_idx, column=1).value
+            if cell_value == '门店':
+                if merge_start is None:
+                    merge_start = row_idx
+            else:
+                if merge_start is not None and row_idx - merge_start > 1:
+                    # 找到下一个"门店"或到达末尾，合并之前的单元格
+                    pass
+                merge_start = None
+
+        # 重新扫描并合并连续的"门店"单元格
+        row_idx = 1
+        while row_idx <= ws_summary.max_row:
+            cell_value = ws_summary.cell(row=row_idx, column=1).value
+            if cell_value == '门店':
+                merge_start = row_idx
+                # 找到连续的空单元格或非"门店"单元格
+                merge_end = row_idx
+                for next_row in range(row_idx + 1, ws_summary.max_row + 1):
+                    next_value = ws_summary.cell(row=next_row, column=1).value
+                    if next_value == '门店' or (next_value is not None and next_value != ''):
+                        break
+                    merge_end = next_row
+                # 如果有需要合并的行
+                if merge_end > merge_start:
+                    ws_summary.merge_cells(start_row=merge_start, start_column=1, end_row=merge_end, end_column=1)
+                row_idx = merge_end + 1
+            else:
+                row_idx += 1
 
         # 保存文件
         if not output_filename:
@@ -1698,31 +1751,61 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
                 # 合并门店名单元格 A1:D1
                 ws_detail.merge_cells('A1:D1')
 
-                # 设置详细Sheet样式
-                ws_detail.column_dimensions['A'].width = 22
-                ws_detail.column_dimensions['B'].width = 20
-                ws_detail.column_dimensions['C'].width = 20
+                # 合并第18行和第24行的A:D单元格
+                ws_detail.merge_cells('A18:D18')
+                ws_detail.merge_cells('A24:D24')
+
+                # 设置详细Sheet样式 - 列宽全部为25
+                ws_detail.column_dimensions['A'].width = 25
+                ws_detail.column_dimensions['B'].width = 25
+                ws_detail.column_dimensions['C'].width = 25
                 ws_detail.column_dimensions['D'].width = 25
 
-                # 标题样式 - 门店名居中加粗
-                ws_detail['A1'].font = Font(bold=True, size=12)
+                # 设置行高：第1行=31，第2行到最后=20
+                ws_detail.row_dimensions[1].height = 31
+                for row_num in range(2, len(detail_data) + 1):
+                    ws_detail.row_dimensions[row_num].height = 20
+
+                # 定义颜色
+                header_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")  # RGB(189,215,238)
+                a_col_fill = PatternFill(start_color="DEEBF7", end_color="DEEBF7", fill_type="solid")  # RGB(222,235,247)
+
+                # 定义字体 - 宋体（SimSun）
+                title_font = Font(name='宋体', size=16, color="000000")
+                bcd_font = Font(name='宋体', size=14, color="000000")
+
+                # 标题样式 - 门店名居中加粗，宋体16号
+                ws_detail['A1'].font = Font(name='宋体', bold=True, size=16, color="000000")
                 ws_detail['A1'].alignment = Alignment(horizontal='center', vertical='center')
 
-                # 表头行样式
+                # 第2行（标题行）样式 - 背景色#BDD7EE，宋体16号黑色
                 for col in range(1, 5):
                     cell = ws_detail.cell(row=2, column=col)
-                    cell.font = Font(bold=True, size=10)
+                    cell.font = Font(name='宋体', bold=True, size=16, color="000000")
+                    cell.fill = header_fill
                     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-                # 分类标题（蓝色）
+                # 第18行和第24行样式 - 背景色#BDD7EE，宋体16号黑色
                 for r in [18, 24]:
-                    ws_detail.cell(row=r, column=1).font = Font(bold=True, size=10, color="0066CC")
+                    cell = ws_detail.cell(row=r, column=1)
+                    cell.font = Font(name='宋体', bold=True, size=16, color="000000")
+                    cell.fill = header_fill
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+
+                # A列其他行背景色 #DEEBF7，B/C/D列字体宋体14号
+                for row_num in range(3, len(detail_data) + 1):
+                    if row_num not in [18, 24]:  # 跳过已处理的分类标题行
+                        # A列背景色
+                        ws_detail.cell(row=row_num, column=1).fill = a_col_fill
+                        ws_detail.cell(row=row_num, column=1).font = Font(name='宋体', size=14, color="000000")
+                        # B/C/D列字体
+                        for col in range(2, 5):
+                            ws_detail.cell(row=row_num, column=col).font = bcd_font
 
                 # 应用边框
                 apply_border(ws_detail, 1, len(detail_data), 1, 4)
 
-                # 设置差值列颜色（正数红色，负数黑色）
-                red_font = Font(color="FF0000")
+                # 设置差值列颜色（正数红色，负数黑色）- 保持宋体14号
                 for row_num in range(3, len(detail_data) + 1):
                     if row_num in [18, 24]:  # 跳过分类标题行
                         continue
@@ -1738,7 +1821,7 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
                         except:
                             pass
                     if is_positive:
-                        cell.font = red_font
+                        cell.font = Font(name='宋体', size=14, color="FF0000")
 
                 seq_num += 1
 
@@ -1773,9 +1856,11 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
                 continue
 
         # 汇总表样式（与周报保持一致，16列）
-        for i in range(1, 17):
+        # 设置列宽：A列=78，B列=26，其他列=15
+        ws_summary.column_dimensions['A'].width = 78
+        ws_summary.column_dimensions['B'].width = 26
+        for i in range(3, 17):
             ws_summary.column_dimensions[get_column_letter(i)].width = 15
-        ws_summary.column_dimensions['A'].width = 40
 
         thin_border = Border(
             left=Side(style='thin'),
@@ -1788,7 +1873,7 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
         green_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
         # 浅灰色背景（差值行）
         gray_fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
-        # 红色字体（负数差值）
+        # 红色字体（差值行所有值）
         red_font = Font(color="FF0000")
 
         for row in ws_summary.iter_rows(min_row=1, max_row=ws_summary.max_row, min_col=1, max_col=16):
@@ -1806,24 +1891,33 @@ def generate_custom_report(period1_start, period1_end, period2_start, period2_en
                         c.font = Font(bold=True, size=10)
                         c.fill = green_fill
 
-                # 差值行 - 检查负数并设置红色字体
+                # 差值行 - 所有数值设为红色字体
                 if cell.column == 2 and cell.value == '差值':
                     for c in row:
                         c.fill = gray_fill
-                        # 检查每个单元格的值是否为负数
+                        # 差值行所有数值都设为红色
                         if c.column > 2:  # 跳过门店和数据周期列
-                            val = c.value
-                            is_negative = False
-                            if isinstance(val, (int, float)):
-                                is_negative = val < 0
-                            elif isinstance(val, str):
-                                try:
-                                    num_val = float(val.replace('%', ''))
-                                    is_negative = num_val < 0
-                                except:
-                                    pass
-                            if is_negative:
-                                c.font = red_font
+                            c.font = red_font
+
+        # 合并A列相邻的"门店"单元格
+        row_idx = 1
+        while row_idx <= ws_summary.max_row:
+            cell_value = ws_summary.cell(row=row_idx, column=1).value
+            if cell_value == '门店':
+                merge_start = row_idx
+                # 找到连续的空单元格或非"门店"单元格
+                merge_end = row_idx
+                for next_row in range(row_idx + 1, ws_summary.max_row + 1):
+                    next_value = ws_summary.cell(row=next_row, column=1).value
+                    if next_value == '门店' or (next_value is not None and next_value != ''):
+                        break
+                    merge_end = next_row
+                # 如果有需要合并的行
+                if merge_end > merge_start:
+                    ws_summary.merge_cells(start_row=merge_start, start_column=1, end_row=merge_end, end_column=1)
+                row_idx = merge_end + 1
+            else:
+                row_idx += 1
 
         # 保存文件
         if not output_filename:
