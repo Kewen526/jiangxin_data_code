@@ -420,6 +420,8 @@ def generate_daily_report(report_date, accounts=None, output_filename=None):
                     except (json.JSONDecodeError, TypeError):
                         pass
 
+            # 去重，防止多账号绑定同一门店导致重复行
+            shop_ids_filter = list(dict.fromkeys(shop_ids_filter))
             print(f"找到 {len(shop_ids_filter)} 个门店")
         finally:
             cursor_temp.close()
